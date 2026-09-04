@@ -13,6 +13,7 @@ from futebol_analytics.analysis.odds import (
     analisar_mercado_1x2,
     analisar_mercado_duas_vias,
 )
+from futebol_analytics.analysis.round_radar import gerar_radar_rodada
 from futebol_analytics.api.exceptions import DadosFutebolError
 from futebol_analytics.config.settings import ConfigurationError
 from futebol_analytics.ui.data import (
@@ -258,7 +259,19 @@ def main() -> None:
             st.warning("Nenhum time foi encontrado nas rodadas deste campeonato.")
             return
 
-        aba_time, aba_comparacao = st.tabs(("Análise de time", "Comparação pré-jogo"))
+        proxima_rodada = localizar_proxima_rodada(rodadas)
+        partidas_futuras = [
+            partida
+            for partida in proxima_rodada.get("partidas", [])
+            if partida.get("status") == "aguardando"
+        ]
+        partidas_futuras.sort(
+            key=lambda partida: partida.get("data_hora_realizacao") or ""
+        )
+
+        aba_time, aba_comparacao, aba_radar = st.tabs(
+            ("Análise de time", "Comparação pré-jogo", "Radar da rodada")
+        )
 
         with aba_time:
             coluna_time, coluna_jogos, coluna_mando = st.columns(3)
@@ -289,16 +302,6 @@ def main() -> None:
                 mostrar_relatorio(relatorio)
 
         with aba_comparacao:
-            proxima_rodada = localizar_proxima_rodada(rodadas)
-            partidas_futuras = [
-                partida
-                for partida in proxima_rodada.get("partidas", [])
-                if partida.get("status") == "aguardando"
-            ]
-            partidas_futuras.sort(
-                key=lambda partida: partida.get("data_hora_realizacao") or ""
-            )
-
             st.success(
                 f"Próxima rodada identificada: {proxima_rodada['numero']}ª rodada"
             )
@@ -438,6 +441,62 @@ def main() -> None:
                     opcao_a=f"Acima de {linha_gols}",
                     opcao_b=f"Abaixo de {linha_gols}",
                     chave=f"total_gols_{str(linha_gols).replace('.', '_')}",
+                )
+
+        with aba_radar:
+            st.subheader(f"Radar da {proxima_rodada['numero']}ª rodada")
+            st.caption(
+                "Ranking baseado no histórico recente do mandante em casa e "
+                "do visitante fora. A pontuação ajusta a frequência pela amostra."
+            )
+            amostra_radar = st.selectbox(
+                "Jogos por time",
+                (5, 10),
+                key="jogos_radar",
+            )
+            sinais = gerar_radar_rodada(
+                rodadas,
+                partidas_futuras,
+                quantidade=amostra_radar,
+            )
+
+            if not sinais:
+                st.warning(
+                    "Não há histórico de mandante e visitante suficiente para "
+                    "montar o radar desta rodada."
+                )
+            else:
+                st.dataframe(
+                    sinais,
+                    column_config={
+                        "partida": st.column_config.TextColumn(
+                            "Partida", pinned=True
+                        ),
+                        "data": st.column_config.TextColumn("Data"),
+                        "mercado": st.column_config.TextColumn("Mercado"),
+                        "frequencia_historica": st.column_config.ProgressColumn(
+                            "Frequência histórica",
+                            min_value=0,
+                            max_value=100,
+                            format="%.1f%%",
+                        ),
+                        "jogos_analisados": st.column_config.NumberColumn(
+                            "Jogos analisados"
+                        ),
+                        "confianca": st.column_config.TextColumn("Confiança"),
+                        "pontuacao": st.column_config.ProgressColumn(
+                            "Pontuação ajustada",
+                            min_value=0,
+                            max_value=100,
+                            format="%.1f",
+                        ),
+                    },
+                    hide_index=True,
+                    width="stretch",
+                )
+                st.warning(
+                    "O radar não considera odds, desfalques ou escalações e não "
+                    "representa garantia de resultado ou recomendação de aposta."
                 )
 
         st.info(
