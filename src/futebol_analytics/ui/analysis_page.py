@@ -15,7 +15,11 @@ from futebol_analytics.analysis.odds import (
 )
 from futebol_analytics.api.exceptions import DadosFutebolError
 from futebol_analytics.config.settings import ConfigurationError
-from futebol_analytics.ui.data import carregar_campeonatos, carregar_rodadas
+from futebol_analytics.ui.data import (
+    carregar_campeonatos,
+    carregar_rodadas,
+    formatar_horario_atualizacao,
+)
 from futebol_analytics.services.rodadas import (
     ProximaRodadaNaoEncontradaError,
     localizar_proxima_rodada,
@@ -245,6 +249,9 @@ def main() -> None:
 
         with st.spinner("Consultando rodadas..."):
             rodadas = carregar_rodadas(campeonato["id"])
+        st.caption(
+            f":material/update: Dados atualizados em {formatar_horario_atualizacao()}"
+        )
         times = extrair_times(rodadas)
 
         if not times:

@@ -4,18 +4,27 @@ import streamlit as st
 
 from futebol_analytics.api.exceptions import DadosFutebolError
 from futebol_analytics.config.settings import ConfigurationError
-from futebol_analytics.ui.data import carregar_campeonatos, carregar_tabela
+from futebol_analytics.ui.data import (
+    carregar_campeonatos,
+    carregar_tabela,
+    formatar_horario_atualizacao,
+)
 
 
 try:
-    campeonatos = carregar_campeonatos()
+    with st.spinner("Consultando campeonatos..."):
+        campeonatos = carregar_campeonatos()
     campeonato = st.selectbox(
         "Campeonato",
         campeonatos,
         format_func=lambda item: f"{item['nome']} · {item['temporada']}",
         key="classificacao_campeonato",
     )
-    tabela = carregar_tabela(campeonato["id"])
+    with st.spinner("Consultando classificação..."):
+        tabela = carregar_tabela(campeonato["id"])
+    st.caption(
+        f":material/update: Dados atualizados em {formatar_horario_atualizacao()}"
+    )
     classificacao = tabela.get("classificacao", [])
 
     if not classificacao:
@@ -69,4 +78,3 @@ try:
     )
 except (ConfigurationError, DadosFutebolError) as exc:
     st.error(str(exc))
-
