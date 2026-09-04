@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Cache que o PowerShell pode criar quando o perfil aponta para esta pasta.
+Microsoft/Windows/PowerShell/ModuleAnalysisCache
