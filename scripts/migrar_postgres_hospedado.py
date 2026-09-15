@@ -49,6 +49,7 @@ def main() -> int:
     parser.add_argument('--env-local', type=Path, default=Path('.env'))
     parser.add_argument('--executar', action='store_true', help='Sem esta opção, apenas mostra quantidades locais')
     args = parser.parse_args()
+    stage = 'origem'
     try:
         local = load_database_settings(args.env_local)
         with psycopg.connect(local.url, row_factory=dict_row, connect_timeout=5) as source:
@@ -59,9 +60,12 @@ def main() -> int:
             if not args.executar:
                 return 0
             values = {**dotenv_values(args.env_local, interpolate=False), **os.environ}
-            hosted = validate_hosted_url((values.get('FUTEBOL_HOSTED_DATABASE_URL') or '').strip())
+            hosted = validate_hosted_url((values.get('FUTEBOL_HOSTED_DATABASE_URL') or
+                                         values.get('DATABASE_URL_UNPOOLED') or '').strip())
+            stage = 'esquema_destino'
             target_store = SnapshotStore(hosted)
             target_store.initialize()
+            stage = 'dados_destino'
             with psycopg.connect(hosted.url, row_factory=dict_row, connect_timeout=10) as destination:
                 for table in TABLES:
                     copy_table(source, destination, table)
@@ -71,8 +75,10 @@ def main() -> int:
             print('Linhas brasileiras no destino: ' + ', '.join(
                 f'{table}={n}' for table, n in target_counts.items()))
         return 0
-    except (ConfigurationError, DatabaseError, psycopg.Error, OSError, ValueError):
-        print('Migração não concluída. Confira as conexões local e hospedada, TLS e permissões; nenhum segredo foi exibido.')
+    except (ConfigurationError, DatabaseError, psycopg.Error, OSError, ValueError) as error:
+        code = getattr(error, 'sqlstate', None)
+        print(f'Migração não concluída em {stage}: {type(error).__name__}' +
+              (f' (SQLSTATE {code})' if code else '') + '. Nenhum segredo foi exibido.')
         return 1
 
 

@@ -6,7 +6,8 @@ O Streamlit Cloud não acessa o PostgreSQL do Docker na máquina local. Crie um 
 PostgreSQL hospedado e obtenha uma URL de conexão direta com `sslmode=require`.
 O banco local mediu cerca de 9,5 MB em 15/09/2026. A Neon anuncia um plano
 gratuito com 0,5 GB de armazenamento por projeto: https://neon.com/pricing .
-Guarde-a somente no `.env` local como `FUTEBOL_HOSTED_DATABASE_URL`; não a publique
+Guarde-a somente no `.env` local como `FUTEBOL_HOSTED_DATABASE_URL`; a CLI Neon
+também pode gravá-la como `DATABASE_URL_UNPOOLED`, que o script aceita. Não a publique
 no GitHub nem no chat. A aplicação no Streamlit Cloud lê `FUTEBOL_DATABASE_URL`
 definido como segredo **na raiz** das configurações do app. Exemplo de formato,
 com valores fictícios:
