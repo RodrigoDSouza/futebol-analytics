@@ -1,2 +1,1 @@
-"""Ferramentas para coleta e análise de dados de futebol."""
-
+"""Futebol Analytics: dados antes de probabilidades."""

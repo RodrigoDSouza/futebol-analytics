@@ -5,8 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "futebol-analytics"
 version = "0.1.0"
-description = "Coleta e análise de dados do futebol brasileiro"
-requires-python = ">=3.12"
+description = "Integração inicial com a API Dados Futebol"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.28,<0.29", "python-dotenv>=1.1,<2", "psycopg[binary]>=3.2,<4", "tzdata>=2025.2"]
+
+[project.optional-dependencies]
+web = ["streamlit>=1.49,<2"]
+browser = ["playwright>=1.62,<2"]
 
 [project.scripts]
 futebol-analytics = "futebol_analytics.main:main"
@@ -15,6 +20,6 @@ futebol-analytics = "futebol_analytics.main:main"
 where = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-addopts = "-p no:cacheprovider --basetemp=.pytest-tmp"
-
+addopts = "--tb=short"
+testpaths = ["tests"]
+markers = ["integration: requer PostgreSQL e FUTEBOL_TEST_DATABASE_URL"]
