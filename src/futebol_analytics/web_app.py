@@ -13,6 +13,12 @@ st.set_page_config(
     layout="wide",
 )
 
+try:
+    # Segredos na raiz do Streamlit passam ao ambiente usado pelos clientes existentes.
+    st.secrets.to_dict()
+except FileNotFoundError:
+    pass  # Desenvolvimento local continua usando .env.
+
 pagina = st.navigation(
     [
         st.Page(

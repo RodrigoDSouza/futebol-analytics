@@ -304,12 +304,18 @@ with focus_tab:
         saved_evaluation = latest_local_report('avaliacao_foco_premier_brasileirao', {'ligas', 'mercados'})
         if saved_evaluation and 'gols_mais_1.5' in saved_evaluation['mercados'] and all('avaliacoes' in item for item in saved_evaluation['ligas'].values()):
             st.session_state['avaliacao_foco'] = saved_evaluation
-    if st.button('Avaliar Premier e Brasileirão com dados locais'):
+    if st.button('Avaliar históricos disponíveis no banco'):
         try:
-            with st.spinner('Avaliando os três mercados nas duas ligas...'):
+            with st.spinner('Avaliando os três mercados nas ligas disponíveis...'):
                 db = store()
+                try:
+                    premier_history = read_csv(db, '2025/2026', 'E0')
+                except ValueError:
+                    premier_history = None
                 st.session_state['avaliacao_foco'] = evaluate_focus(
-                    read_csv(db, '2025/2026', 'E0'), read_brasileirao_goals(db, '2026'))
+                    premier_history, read_brasileirao_goals(db, '2026'))
+                if premier_history is None:
+                    st.info('Premier 2025/26 sem histórico CSV neste banco. Avaliação brasileira disponível; a fonte europeia exige direitos de uso para publicação.')
         except (ValueError, DatabaseError):
             st.error('Não foi possível ler as duas ligas. Confira o PostgreSQL e as capturas locais.')
     focused = st.session_state.get('avaliacao_foco')
@@ -325,6 +331,6 @@ with focus_tab:
                       for name, item in focused['ligas'].items()
                       for market, evaluation in item['avaliacoes'].items()],
                      hide_index=True, width='stretch')
-        st.caption('Premier: CSV 2025/26. Brasileirão: jogos locais de 2026. A avaliação usa as versões atuais dessas fontes.')
+        st.caption('Premier: CSV 2025/26 quando disponível. Brasileirão: jogos locais de 2026. A avaliação usa as versões atuais dessas fontes.')
         st.warning('O modelo não está aprovado para indicações. Compare o Brier do modelo com a referência simples da liga.')
         download(focused, 'Baixar avaliação das duas ligas', 'avaliacao_foco')

@@ -1,5 +1,40 @@
 # Fluxo diário do Futebol Analytics
 
+## PostgreSQL hospedado para o painel público
+
+O Streamlit Cloud não acessa o PostgreSQL do Docker na máquina local. Crie um banco
+PostgreSQL hospedado e obtenha uma URL de conexão direta com `sslmode=require`.
+O banco local mediu cerca de 9,5 MB em 15/09/2026. A Neon anuncia um plano
+gratuito com 0,5 GB de armazenamento por projeto: https://neon.com/pricing .
+Guarde-a somente no `.env` local como `FUTEBOL_HOSTED_DATABASE_URL`; não a publique
+no GitHub nem no chat. A aplicação no Streamlit Cloud lê `FUTEBOL_DATABASE_URL`
+definido como segredo **na raiz** das configurações do app. Exemplo de formato,
+com valores fictícios:
+
+```toml
+FUTEBOL_DATABASE_URL = "postgresql://usuario:senha@host.exemplo/db?sslmode=require"
+FOOTBALL_DATA_API_KEY = "token-da-sua-conta"
+```
+
+`FOOTBALL_DATA_API_KEY` é necessário para atualizar a agenda europeia; copie a
+chave da sua conta para os segredos do Streamlit, nunca para o repositório.
+
+Antes de usar a URL no Streamlit, execute a prévia da migração a partir da cópia
+Git local (`.publish`), que usa o `.env` da pasta principal sem exibir credenciais:
+
+```powershell
+..\.venv\Scripts\python.exe scripts\migrar_postgres_hospedado.py --env-local ..\.env
+..\.venv\Scripts\python.exe scripts\migrar_postgres_hospedado.py --env-local ..\.env --executar
+```
+
+O script cria o esquema no destino e copia somente `futebol_capturas`,
+`futebol_campeonatos`, `futebol_times` e `futebol_partidas` da origem Dados Futebol.
+É idempotente: partidas e capturas com a mesma chave não são duplicadas. Os CSVs
+europeus não são enviados. A fonte Football-Data.co.uk indica uso para indivíduos
+privados e exclui produtos comerciais/de treinamento; confirme os direitos de uso
+antes de levar esse histórico para um produto público: https://football-data.co.uk/data.php . Sem os CSVs europeus, as
+avaliações da Premier no painel seguirão indisponíveis, mesmo com banco hospedado.
+
 Objetivo: consultar agenda e histórico, estimar mercados, selecionar até três
 jogos futuros do dia, obter as odds desses mercados e comparar preço com probabilidade.
 

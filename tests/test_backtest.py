@@ -1,6 +1,7 @@
 from copy import deepcopy
 import pytest
 from futebol_analytics.analysis.backtest import backtest
+from futebol_analytics.analysis.focus import evaluate_focus
 
 
 def sample():
@@ -50,3 +51,12 @@ def test_over_one_point_five_counts_two_total_goals():
     assert [row['resultado'] for row in result['previsoes']] == [
         int(r['gols_mandante'] + r['gols_visitante'] >= 2) for r in rows[5:]]
     assert all(row['ultima_data_treino'] < row['data'] for row in result['previsoes'])
+
+
+def test_brazilian_evaluation_survives_missing_european_history():
+    result = evaluate_focus(None, {'partidas': sample(), 'temporada': '2026'})
+    assert set(result['ligas']) == {'brasileirao'}
+    assert result['ligas']['brasileirao']['avaliacoes']['gols_mais_1.5']['jogos_avaliados'] == 10
+    assert result['indicacoes'] == []
+    with pytest.raises(ValueError):
+        evaluate_focus(None, None)
