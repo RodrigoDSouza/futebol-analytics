@@ -1,6 +1,7 @@
 import pytest
 
-from futebol_analytics.analysis.calibration import calibration_report, grouped_calibration
+from futebol_analytics.analysis.calibration import (calibration_report, closing_value_report,
+    grouped_calibration)
 
 
 def test_calibration_reports_brier_log_loss_and_weighted_error():
@@ -22,3 +23,14 @@ def test_calibration_handles_empty_sample_and_groups_markets():
             {"mercado": "totals", "selecao": "over", "linha": 2.5,
              "probabilidade": .4, "resultado": 0}]
     assert len(grouped_calibration(rows)) == 2
+
+
+def test_closing_value_compares_entry_price_with_closing_consensus():
+    report = closing_value_report([
+        {"odd_entrada": 2.10, "odd_fechamento": 2.00},
+        {"odd_entrada": 1.80, "odd_fechamento": 2.00},
+        {"odd_entrada": None, "odd_fechamento": 1.90},
+    ])
+    assert report["comparacoes"] == 2
+    assert report["clv_medio"] == pytest.approx(-.025)
+    assert report["percentual_superou_fechamento"] == .5

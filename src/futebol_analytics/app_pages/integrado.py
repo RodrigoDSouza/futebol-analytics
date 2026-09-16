@@ -516,6 +516,17 @@ with decision_tab:
                                 column_config={name: st.column_config.NumberColumn(format='%.1f%%')
                                     for name in ('probabilidade_media', 'frequencia_observada',
                                                  'erro_absoluto')})
+                        closing = published.get('closing_line_value') or {}
+                        if closing.get('comparacoes'):
+                            st.markdown('###### Qualidade do preço · fechamento')
+                            closing_metrics = st.columns(3)
+                            closing_metrics[0].metric('Comparações', closing['comparacoes'])
+                            closing_metrics[1].metric('CLV médio', f"{closing['clv_medio']:.2%}")
+                            closing_metrics[2].metric('Superou o fechamento',
+                                                      f"{closing['percentual_superou_fechamento']:.1%}")
+                            st.caption('CLV = odd observada na previsão ÷ odd mediana de fechamento − 1. Valor positivo indica que o preço observado foi melhor que o fechamento; isso não mede lucro realizado.')
+                        else:
+                            st.caption('CLV ainda sem amostra: ele aparecerá quando previsões com odd registrada também tiverem consenso de fechamento.')
             validation_rows = [{
                 'mercado': {'over_1.5': 'Mais de 1,5 gols', 'over_2.5': 'Mais de 2,5 gols',
                             'ambas_marcam': 'Ambos marcam'}[key],

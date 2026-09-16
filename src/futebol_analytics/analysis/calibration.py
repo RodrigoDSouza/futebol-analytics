@@ -48,3 +48,25 @@ def grouped_calibration(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                        **{key: report[key] for key in
                           ("avaliadas", "brier", "log_loss", "erro_calibracao")}})
     return result
+
+
+def closing_value_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compara a odd observada na previsão com o consenso de fechamento."""
+    valid = []
+    for row in rows:
+        try:
+            entry, closing = float(row.get("odd_entrada")), float(row.get("odd_fechamento"))
+        except (TypeError, ValueError):
+            continue
+        if entry <= 1 or closing <= 1:
+            continue
+        value = entry / closing - 1
+        valid.append({**row, "odd_entrada": entry, "odd_fechamento": closing,
+                      "clv": value, "superou_fechamento": value > 0})
+    if not valid:
+        return {"comparacoes": 0, "clv_medio": None,
+                "percentual_superou_fechamento": None, "registros": []}
+    return {"comparacoes": len(valid),
+            "clv_medio": sum(row["clv"] for row in valid) / len(valid),
+            "percentual_superou_fechamento": sum(row["superou_fechamento"] for row in valid) / len(valid),
+            "registros": valid}

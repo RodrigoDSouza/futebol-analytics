@@ -63,11 +63,15 @@ def test_save_predictions_records_future_probabilities_once():
         "vitoria_visitante": .25, "over_1.5": .7, "over_2.5": .45,
         "ambas_marcam": .52, "amostra_mandante": 10, "amostra_visitante": 9,
         "ultima_partida": "2026-09-10", "incerteza_aproximada": .15,
-        "confianca": "baixa"}]}
+        "confianca": "baixa", "precos_entrada": {"over_2.5": {
+            "odd": 2.05, "observado_em": now, "checkpoint": "abertura"}}}]}
     assert save_predictions(PredictionStore(), "brasileirao", report, calculated_at=now) == 6
     assert len(captured["payload"]) == 6
     assert "ON CONFLICT" in captured["statement"]
     assert captured["payload"][0]["evidencia"]["inicio"].endswith("+00:00")
+    over = next(row for row in captured["payload"] if row["mercado"] == "totals"
+                and float(row["linha"]) == 2.5)
+    assert over["evidencia"]["odd_entrada"] == 2.05
 
 
 def test_save_predictions_skips_games_without_odds_event():

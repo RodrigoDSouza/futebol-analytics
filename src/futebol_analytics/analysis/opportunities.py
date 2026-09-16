@@ -255,7 +255,8 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
             "gols_esperados_mandante": prediction["gols_esperados"]["mandante"],
             "gols_esperados_visitante": prediction["gols_esperados"]["visitante"],
             "media_gols_recente_casa": prediction["media_gols_recente"]["mandante_em_casa"],
-            "media_gols_recente_fora": prediction["media_gols_recente"]["visitante_fora"]})
+            "media_gols_recente_fora": prediction["media_gols_recente"]["visitante_fora"],
+            "precos_entrada": {}})
         summaries[-1].update(amostra_mandante=sample["mandante_casa"],
             amostra_visitante=sample["visitante_fora"], ultima_partida=sample["ultima_partida"],
             incerteza_aproximada=uncertainty,
@@ -271,6 +272,24 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
         item["estado_decisao"] = ("acompanhar" if item["evento_id"] in eligible_events
                                   else "sem valor validado" if item["evento_id"] in quoted_events
                                   else "sem preço de mercado")
+        for quote in (row for row in odds if str(row["evento_id"]) == item["evento_id"]):
+            selection, field = str(quote["selecao"]).casefold(), None
+            if quote["mercado"] == "h2h":
+                if canonical_team(str(quote["selecao"])) == canonical_team(item["mandante"]):
+                    field = "vitoria_mandante"
+                elif canonical_team(str(quote["selecao"])) == canonical_team(item["visitante"]):
+                    field = "vitoria_visitante"
+                elif selection in ("draw", "empate"):
+                    field = "empate"
+            elif quote["mercado"] in ("totals", "alternate_totals") and selection == "over":
+                field = "over_1.5" if float(quote["linha"] or 0) == 1.5 else (
+                        "over_2.5" if float(quote["linha"] or 0) == 2.5 else None)
+            elif quote["mercado"] == "btts" and selection in ("yes", "sim"):
+                field = "ambas_marcam"
+            price = quote.get("odd_melhor") or quote.get("odd_mediana")
+            if field and price:
+                item["precos_entrada"][field] = {"odd": float(price),
+                    "observado_em": quote.get("observado_em"), "checkpoint": quote.get("checkpoint")}
     return {"modelo": "poisson_mando_temporal_v2", "oportunidades": ranked,
             "candidatos_avaliados": len(candidates), "eventos_sem_modelo": rejected,
             "pre_selecao_eventos": shortlist, "resumo_jogos": summaries,

@@ -12,7 +12,8 @@ from psycopg.types.json import Jsonb
 
 from futebol_analytics.database.store import SnapshotStore
 from futebol_analytics.analysis.opportunities import canonical_team
-from futebol_analytics.analysis.calibration import calibration_report, grouped_calibration
+from futebol_analytics.analysis.calibration import (calibration_report, grouped_calibration,
+    closing_value_report)
 
 
 def checkpoint(kickoff: datetime, captured: datetime) -> str | None:
@@ -189,15 +190,21 @@ def save_predictions(store: SnapshotStore, league: str, report: dict[str, Any], 
             continue
         if _time(game["inicio"]) <= calculated_at:
             continue
-        evidence = {key: game.get(key) for key in ("mandante", "visitante", "inicio",
+        base_evidence = {key: game.get(key) for key in ("mandante", "visitante", "inicio",
             "amostra_mandante", "amostra_visitante", "ultima_partida",
             "incerteza_aproximada", "confianca")}
-        if isinstance(evidence.get("inicio"), datetime):
-            evidence["inicio"] = evidence["inicio"].isoformat()
+        if isinstance(base_evidence.get("inicio"), datetime):
+            base_evidence["inicio"] = base_evidence["inicio"].isoformat()
         for field, market, selection, line in specs:
             probability = game.get(field)
             if type(probability) not in (int, float) or not 0 < probability < 1:
                 continue
+            evidence = dict(base_evidence)
+            price = (game.get("precos_entrada") or {}).get(field) or {}
+            if price.get("odd"):
+                evidence.update(odd_entrada=float(price["odd"]),
+                                odd_observada_em=str(price.get("observado_em") or ""),
+                                checkpoint_entrada=price.get("checkpoint"))
             rows.append({"id": str(uuid4()), "provedor": "the-odds-api", "liga": league,
                 "evento_id": str(game["evento_id"]), "calculado_em": calculated_at,
                 "modelo": model, "versao": model.rsplit("_", 1)[-1], "mercado": market,
@@ -267,16 +274,38 @@ def evaluate_predictions(store: SnapshotStore, league: str, history: list[dict[s
             GROUP BY mercado, selecao, linha ORDER BY mercado, linha, selecao
         """, (league,)).fetchall()
         evaluated = connection.execute("""
-            SELECT mercado, selecao, linha, probabilidade, resultado
-            FROM futebol_previsoes
-            WHERE provedor='the-odds-api' AND liga=%s AND resultado IS NOT NULL
-            ORDER BY calculado_em, evento_id, mercado, selecao, linha
+            SELECT p.evento_id, p.mercado, p.selecao, p.linha, p.probabilidade,
+                   p.resultado, p.evidencia->>'odd_entrada' AS odd_entrada,
+                   c.odd_mediana AS odd_fechamento
+            FROM futebol_previsoes p
+            JOIN futebol_odds_eventos e USING (provedor, liga, evento_id)
+            LEFT JOIN LATERAL (
+                SELECT consenso.odd_mediana
+                FROM futebol_odds_consensos consenso
+                WHERE (consenso.provedor, consenso.liga, consenso.evento_id,
+                       consenso.linha, consenso.checkpoint) =
+                      (p.provedor, p.liga, p.evento_id, p.linha, 'fechamento')
+                  AND (consenso.mercado=p.mercado OR
+                       (p.mercado='totals' AND consenso.mercado='alternate_totals'))
+                  AND lower(consenso.selecao) = lower(CASE p.selecao
+                    WHEN 'mandante' THEN e.mandante WHEN 'visitante' THEN e.visitante
+                    WHEN 'empate' THEN 'Draw' WHEN 'over' THEN 'Over'
+                    WHEN 'sim' THEN 'Yes' ELSE p.selecao END)
+                ORDER BY (consenso.mercado=p.mercado) DESC, consenso.observado_em DESC
+                LIMIT 1
+            ) c ON true
+            WHERE p.provedor='the-odds-api' AND p.liga=%s AND p.resultado IS NOT NULL
+            ORDER BY p.calculado_em, p.evento_id, p.mercado, p.selecao, p.linha
         """, (league,)).fetchall()
     evaluated = [{**row, "linha": float(row["linha"]),
                   "probabilidade": float(row["probabilidade"]),
-                  "resultado": int(row["resultado"])} for row in evaluated]
+                  "resultado": int(row["resultado"]),
+                  "odd_entrada": float(row["odd_entrada"]) if row.get("odd_entrada") else None,
+                  "odd_fechamento": float(row["odd_fechamento"]) if row.get("odd_fechamento") else None}
+                 for row in evaluated]
     return {"avaliadas_agora": len(updates), "calibracao_geral": calibration_report(evaluated),
-            "calibracao_por_mercado": grouped_calibration(evaluated), "desempenho": [
+            "calibracao_por_mercado": grouped_calibration(evaluated),
+            "closing_line_value": closing_value_report(evaluated), "desempenho": [
         {**row, "linha": float(row["linha"]),
          "brier": float(row["brier"]) if row["brier"] is not None else None}
         for row in performance]}

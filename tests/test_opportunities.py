@@ -73,6 +73,7 @@ def test_fixture_is_reconciled_with_matching_odds_event():
     assert len(report["resumo_jogos"]) == 1
     assert report["resumo_jogos"][0]["evento_id"] == "odds-1"
     assert report["resumo_jogos"][0]["possui_evento_odds"] is True
+    assert report["resumo_jogos"][0]["precos_entrada"]["over_2.5"]["odd"] == 2.0
 
 
 def test_risk_plan_caps_daily_exposure_and_correlated_markets():
