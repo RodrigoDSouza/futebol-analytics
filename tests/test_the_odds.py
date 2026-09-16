@@ -38,7 +38,7 @@ def test_targeted_markets_are_bounded_and_use_event_endpoint(monkeypatch):
     monkeypatch.setenv("THE_ODDS_API_KEY", "secret-key")
     def handler(request):
         assert "/events/event-1/odds" in str(request.url)
-        assert request.url.params["markets"] == "btts,alternate_totals"
+        assert request.url.params["markets"] in {"btts", "alternate_totals"}
         return httpx.Response(200, headers={"x-requests-remaining": "490"}, json={
             "id": "event-1", "commence_time": "2026-09-20T15:00:00Z",
             "home_team": "A", "away_team": "B", "bookmakers": []})
@@ -48,6 +48,22 @@ def test_targeted_markets_are_bounded_and_use_event_endpoint(monkeypatch):
     assert result["mercados"] == ["btts", "alternate_totals"]
     with pytest.raises(ValueError):
         collect_event_odds("premier_league", ["1", "2", "3", "4"])
+
+
+def test_targeted_markets_preserve_partial_success_and_explain_failure(monkeypatch):
+    monkeypatch.setenv("THE_ODDS_API_KEY", "secret-key")
+    def handler(request):
+        if request.url.params["markets"] == "alternate_totals":
+            return httpx.Response(422, json={"error_code": "MARKET_INVALID",
+                                             "message": "Market not available"})
+        return httpx.Response(200, json={"id": "event-1",
+            "commence_time": "2026-09-20T15:00:00Z", "home_team": "A", "away_team": "B",
+            "bookmakers": [{"key": "book", "markets": [{"key": "btts", "outcomes": []}]}]})
+    result = collect_event_odds("premier_league", ["event-1"],
+                                transport=httpx.MockTransport(handler))
+    assert len(result["eventos"]) == 1
+    assert result["falhas"][0]["http"] == 422
+    assert "secret-key" not in str(result)
 
 
 def test_checkpoint_retention_windows():

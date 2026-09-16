@@ -74,33 +74,74 @@ def collect_event_odds(league: str, event_ids: list[str], *,
     if not token or not token.isascii() or any(char.isspace() for char in token):
         raise ValueError("Preencha THE_ODDS_API_KEY com a chave da The Odds API.")
     captured = datetime.now(timezone.utc)
-    events, remaining, used = [], None, None
+    merged: dict[str, dict[str, Any]] = {}
+    failures: list[dict[str, Any]] = []
+    remaining, used = None, None
     try:
         with httpx.Client(timeout=30, follow_redirects=False, transport=transport) as client:
             for event_id in unique:
-                url = (f"https://api.the-odds-api.com/v4/sports/{SPORTS[league]}"
-                       f"/events/{event_id}/odds")
-                response = client.get(url, params={"apiKey": token, "regions": "eu",
-                    "markets": ",".join(TARGET_MARKETS), "oddsFormat": "decimal",
-                    "dateFormat": "iso"}, headers={"Accept": "application/json"})
-                if response.status_code != 200:
-                    raise ValueError(f"The Odds API: HTTP {response.status_code}. Verifique mercados e cota.")
-                payload = response.json()
-                if not isinstance(payload, dict):
-                    raise ValueError("The Odds API retornou formato inesperado.")
-                events.append(payload)
-                remaining = _integer_header(response, "x-requests-remaining")
-                used = _integer_header(response, "x-requests-used")
+                for market in TARGET_MARKETS:
+                    url = (f"https://api.the-odds-api.com/v4/sports/{SPORTS[league]}"
+                           f"/events/{event_id}/odds")
+                    response = client.get(url, params={"apiKey": token, "regions": "eu",
+                        "markets": market, "oddsFormat": "decimal", "dateFormat": "iso"},
+                        headers={"Accept": "application/json"})
+                    remaining = _integer_header(response, "x-requests-remaining") or remaining
+                    used = _integer_header(response, "x-requests-used") or used
+                    if response.status_code != 200:
+                        failures.append({"evento_id": event_id, "mercado": market,
+                                         "http": response.status_code,
+                                         "motivo": _safe_api_message(response)})
+                        continue
+                    payload = response.json()
+                    if not isinstance(payload, dict):
+                        failures.append({"evento_id": event_id, "mercado": market,
+                                         "http": 200, "motivo": "formato inesperado"})
+                        continue
+                    if event_id not in merged:
+                        merged[event_id] = {**payload, "bookmakers": []}
+                    _merge_bookmakers(merged[event_id]["bookmakers"], payload.get("bookmakers") or [])
     except httpx.RequestError:
         raise ValueError("Falha de conexão com a The Odds API.") from None
     except ValueError as error:
         if str(error).startswith("The Odds API"):
             raise
         raise ValueError("The Odds API retornou JSON inválido.") from None
+    if not merged:
+        summary = "; ".join(sorted({f"{item['mercado']}: HTTP {item['http']} · {item['motivo']}"
+                                    for item in failures}))
+        raise ValueError(f"Nenhum mercado adicional foi disponibilizado. {summary}")
     return {"provedor": "the-odds-api", "liga": league,
             "capturado_em": captured.isoformat(), "creditos_restantes": remaining,
-            "creditos_usados": used, "eventos": events, "mercados": list(TARGET_MARKETS),
+            "creditos_usados": used, "eventos": list(merged.values()),
+            "mercados": list(TARGET_MARKETS), "falhas": failures,
             "limitacoes": ["Consulta direcionada; o custo depende dos eventos e mercados solicitados."]}
+
+
+def _safe_api_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return "resposta sem detalhe"
+    if not isinstance(payload, dict):
+        return "resposta sem detalhe"
+    code = str(payload.get("error_code") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    safe = " · ".join(value for value in (code, message) if value)
+    # A API não deveria ecoar a chave, mas nunca repassamos parâmetros/URLs.
+    return safe[:300] or "resposta sem detalhe"
+
+
+def _merge_bookmakers(target: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> None:
+    by_key = {str(item.get("key") or item.get("title")): item for item in target}
+    for bookmaker in incoming:
+        key = str(bookmaker.get("key") or bookmaker.get("title"))
+        if key not in by_key:
+            copy = {**bookmaker, "markets": list(bookmaker.get("markets") or [])}
+            target.append(copy)
+            by_key[key] = copy
+        else:
+            by_key[key].setdefault("markets", []).extend(bookmaker.get("markets") or [])
 
 
 def _integer_header(response: httpx.Response, name: str) -> int | None:

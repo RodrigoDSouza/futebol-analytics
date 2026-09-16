@@ -476,8 +476,14 @@ with focus_tab:
                     st.session_state['odds_proximos'] = upcoming_odds(db, odds_league)
                     st.session_state.pop('ranking_oportunidades', None)
                     st.success(f"Mercados adicionais armazenados para {saved['eventos']} jogos. Refaça o ranking.")
-            except (ValueError, DatabaseError):
-                st.error('A consulta direcionada falhou. Confira a cota e se esses mercados estão disponíveis para os eventos.')
+                    if capture.get('falhas'):
+                        st.warning(f"Algumas combinações não estavam disponíveis ({len(capture['falhas'])} de {len(event_ids) * 2}). Os resultados disponíveis foram preservados.")
+                        with st.expander('Ver mercados indisponíveis'):
+                            st.dataframe(capture['falhas'], hide_index=True, width='stretch')
+            except ValueError as error:
+                st.error(f'A consulta direcionada falhou: {error}')
+            except DatabaseError:
+                st.error('A consulta respondeu, mas não foi possível armazenar o resultado no PostgreSQL.')
     st.caption('A coleta manual abaixo consome créditos. A leitura da tabela acima usa somente o Neon.')
     if st.button('Coletar e armazenar odds'):
         try:
