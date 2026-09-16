@@ -172,7 +172,7 @@ def _details(event: dict[str, Any], provider: str, league: str,
             continue
         for market in bookmaker.get("markets") or []:
             market_key = market.get("key")
-            if market_key not in ("h2h", "totals", "btts"):
+            if market_key not in ("h2h", "totals", "btts", "alternate_totals"):
                 continue
             for outcome in market.get("outcomes") or []:
                 price, selection = outcome.get("price"), outcome.get("name")

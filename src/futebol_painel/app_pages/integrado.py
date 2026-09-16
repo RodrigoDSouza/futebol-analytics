@@ -13,6 +13,7 @@ from futebol_analytics.analysis.backtest import backtest
 from futebol_analytics.analysis.focus import evaluate_focus
 from futebol_analytics.analysis.tracker import track_focus
 from futebol_analytics.analysis.quote_check import check_quote
+from futebol_analytics.analysis.opportunities import rank_opportunities
 from futebol_analytics.api.league import collect_premier_season
 from futebol_analytics.analysis.multimarket import estimate
 from futebol_analytics.config.settings import load_database_settings
@@ -21,7 +22,7 @@ from futebol_analytics.database.csv_store import read_csv
 from futebol_analytics.database.forecast import upcoming, forecast
 from futebol_analytics.database.league_rows import read_brasileirao_goals, read_brasileirao_schedule
 from futebol_analytics.daily import plan
-from futebol_analytics.api.the_odds import collect_odds
+from futebol_analytics.api.the_odds import collect_event_odds, collect_odds
 from futebol_analytics.database.market_store import save_odds, storage_report, upcoming_odds
 
 
@@ -405,6 +406,78 @@ with focus_tab:
             st.caption('A probabilidade de mercado remove a margem do conjunto de cotações. O benchmark da liga é uma frequência histórica igual para todos os confrontos e ainda não comprova vantagem.')
         else:
             st.info('Nenhum evento futuro com consenso armazenado foi encontrado para esta liga.')
+        st.markdown('#### Ranking experimental de oportunidades')
+        st.caption('O modelo diferencia os confrontos e só exibe uma oportunidade quando supera a referência da liga no backtest, há ao menos três casas e a vantagem e o valor esperado chegam a 3%.')
+        if st.button('Analisar oportunidades nos jogos carregados'):
+            try:
+                with st.spinner('Calculando previsões e validação cronológica...'):
+                    db = store()
+                    if odds_league == 'premier_league':
+                        histories = []
+                        for selected_season in ('2025/2026', '2026/2027'):
+                            try:
+                                histories.extend(read_csv(db, selected_season, 'E0')['partidas'])
+                            except ValueError:
+                                pass
+                        if not histories:
+                            raise ValueError('Histórico da Premier indisponível.')
+                    else:
+                        histories = read_brasileirao_goals(db, str(today.year))['partidas']
+                    st.session_state['ranking_oportunidades'] = rank_opportunities(
+                        histories, market_rows, today=today)
+                    st.session_state['ranking_oportunidades_liga'] = odds_league
+            except (ValueError, DatabaseError) as error:
+                st.warning(f'Não foi possível concluir o ranking: {error}')
+        ranking = (st.session_state.get('ranking_oportunidades')
+                   if st.session_state.get('ranking_oportunidades_liga') == odds_league else None)
+        if ranking:
+            validation_rows = [{
+                'mercado': {'over_1.5': 'Mais de 1,5 gols', 'over_2.5': 'Mais de 2,5 gols',
+                            'ambas_marcam': 'Ambos marcam'}[key],
+                'jogos avaliados': item['jogos_avaliados'],
+                'Brier · modelo': item['brier_modelo'], 'Brier · liga': item['brier_liga'],
+                'aprovado': item['aprovado']}
+                for key, item in ranking['validacoes'].items()]
+            st.dataframe(validation_rows, hide_index=True, width='stretch',
+                column_config={'Brier · modelo': st.column_config.NumberColumn(format='%.4f'),
+                               'Brier · liga': st.column_config.NumberColumn(format='%.4f')})
+            if ranking['oportunidades']:
+                st.dataframe([{
+                    'início': item['inicio'].astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m %H:%M'),
+                    'jogo': item['jogo'], 'mercado': item['mercado'],
+                    'probabilidade · modelo': 100 * item['probabilidade_modelo'],
+                    'probabilidade · mercado': 100 * item['probabilidade_mercado'],
+                    'vantagem · p.p.': 100 * item['vantagem'],
+                    'melhor odd observada': item['odd_referencia'],
+                    'valor esperado · por R$ 1': item['valor_esperado'], 'casas': item['casas']}
+                    for item in ranking['oportunidades']], hide_index=True, width='stretch',
+                    column_config={
+                        'probabilidade · modelo': st.column_config.NumberColumn(format='%.1f%%'),
+                        'probabilidade · mercado': st.column_config.NumberColumn(format='%.1f%%'),
+                        'vantagem · p.p.': st.column_config.NumberColumn(format='%+.1f'),
+                        'melhor odd observada': st.column_config.NumberColumn(format='%.2f'),
+                        'valor esperado · por R$ 1': st.column_config.NumberColumn(format='%+.3f')})
+            else:
+                st.info('Nenhuma oportunidade passou por todas as travas neste momento.')
+            if ranking['eventos_sem_modelo']:
+                st.caption(f"{len(ranking['eventos_sem_modelo'])} jogo(s) ficaram sem modelo por falta de histórico ou associação segura das equipes.")
+            st.warning(ranking['aviso'])
+        event_ids = ranking.get('pre_selecao_eventos', []) if ranking else []
+        if event_ids:
+            st.caption(f'Consulta opcional de ambos marcam e linhas alternativas para os {len(event_ids)} jogos com maior divergência preliminar: custo estimado de {len(event_ids) * 2} créditos.')
+        else:
+            st.caption('Analise as oportunidades primeiro para formar a pré-seleção dos mercados adicionais.')
+        if event_ids and st.button('Buscar ambos marcam e over 1,5 da pré-seleção'):
+            try:
+                with st.spinner('Consultando mercados adicionais dos jogos pré-selecionados...'):
+                    db = store()
+                    capture = collect_event_odds(odds_league, event_ids)
+                    saved = save_odds(db, capture)
+                    st.session_state['odds_proximos'] = upcoming_odds(db, odds_league)
+                    st.session_state.pop('ranking_oportunidades', None)
+                    st.success(f"Mercados adicionais armazenados para {saved['eventos']} jogos. Refaça o ranking.")
+            except (ValueError, DatabaseError):
+                st.error('A consulta direcionada falhou. Confira a cota e se esses mercados estão disponíveis para os eventos.')
     st.caption('A coleta manual abaixo consome créditos. A leitura da tabela acima usa somente o Neon.')
     if st.button('Coletar e armazenar odds'):
         try:
