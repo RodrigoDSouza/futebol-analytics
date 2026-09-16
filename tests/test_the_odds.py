@@ -96,3 +96,16 @@ def test_consensus_removes_bookmaker_margin():
     consensus = _consensus_rows("the-odds-api", "premier_league", "e1",
                                 "abertura", now, details)
     assert sum(row["probabilidade_justa"] for row in consensus) == pytest.approx(1)
+
+
+def test_consensus_skips_incomplete_alternate_line():
+    now = datetime.now(timezone.utc)
+    event = {"id": "e1", "bookmakers": [{"key": "book", "markets": [{
+        "key": "alternate_totals", "outcomes": [{"name": "Over", "price": 1.3, "point": 1.5},
+                                                   {"name": "Over", "price": 2.2, "point": 2.5},
+                                                   {"name": "Under", "price": 1.7, "point": 2.5}]}]}]}
+    details = _details(event, "the-odds-api", "premier_league", now)
+    consensus = _consensus_rows("the-odds-api", "premier_league", "e1",
+                                "abertura", now, details)
+    assert {(row["selecao"], row["linha"]) for row in consensus} == {
+        ("Over", Decimal("2.5")), ("Under", Decimal("2.5"))}

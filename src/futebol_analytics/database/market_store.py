@@ -198,8 +198,15 @@ def _consensus_rows(provider: str, league: str, event_id: str,
         margins[(market, line)] += Decimal(1) / price
     result = []
     for (market, selection, line), prices in grouped.items():
+        # Linhas alternativas podem vir com apenas um lado em parte das casas.
+        # Sem pelo menos duas seleções não existe margem removível nem consenso justo.
+        selections = {key[1] for key in grouped if key[0] == market and key[2] == line}
+        if len(selections) < 2:
+            continue
         med = medians[(market, selection, line)]
         probability = (Decimal(1) / med) / margins[(market, line)]
+        if not Decimal(0) < probability < Decimal(1):
+            continue
         result.append({"provedor": provider, "liga": league, "evento_id": event_id,
             "checkpoint": mark, "mercado": market, "selecao": selection, "linha": line,
             "observado_em": captured, "casas": len(prices), "odd_mediana": med,
