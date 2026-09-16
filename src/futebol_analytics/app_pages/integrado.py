@@ -362,9 +362,18 @@ with decision_tab:
             probability_columns = ('vitória mandante · mercado', 'empate · mercado',
                 'vitória visitante · mercado', '+1,5 · mercado', '+2,5 · mercado',
                 'ambos marcam · mercado')
-            st.dataframe(market_summary, hide_index=True, width='stretch',
-                column_config={name: st.column_config.NumberColumn(format='%.1f%%')
-                               for name in probability_columns})
+            formatted_summary = []
+            for item in market_summary:
+                row = {key: item.get(key) for key in ('início', 'jogo')}
+                for name in probability_columns:
+                    value = item.get(name)
+                    row[name] = f'{value:.1f}%' if value is not None else '—'
+                extras = sum(item.get(name) is not None
+                             for name in ('+1,5 · mercado', 'ambos marcam · mercado'))
+                row['cobertura adicional'] = 'completa' if extras == 2 else 'parcial' if extras else 'não coletada'
+                formatted_summary.append(row)
+            st.dataframe(formatted_summary, hide_index=True, width='stretch')
+            st.caption('“—” significa que esse mercado adicional não foi coletado para o jogo. Não significa 0%. Resultado e Over 2,5 entram na coleta automática; Over 1,5 e Ambos Marcam dependem da consulta direcionada.')
             with st.expander('Dados técnicos das odds'):
                 st.caption(f"{len(market_rows)} registros de mercado consolidados em {len(grouped_market)} jogos. A tabela repetida por seleção foi removida da interface.")
                 download(market_rows, 'Baixar odds detalhadas', f'odds_detalhadas_{odds_league}')
