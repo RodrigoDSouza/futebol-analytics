@@ -20,6 +20,9 @@ try:
     database_url = st.secrets.get("FUTEBOL_DATABASE_URL")
     if database_url:
         os.environ["FUTEBOL_DATABASE_URL"] = str(database_url).strip()
+    odds_key = st.secrets.get("THE_ODDS_API_KEY")
+    if odds_key:
+        os.environ["THE_ODDS_API_KEY"] = str(odds_key).strip()
 except FileNotFoundError:
     pass  # Desenvolvimento local continua usando .env.
 

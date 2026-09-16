@@ -928,6 +928,37 @@ gratuito em https://www.football-data.org/client/register e https://my.sportmonk
 Preencha os campos j? adicionados ao `.env`, sem compartilhar os valores no chat:
 `FOOTBALL_DATA_API_KEY` e `SPORTMONKS_API_TOKEN`. N?o s?o a chave de Dados Futebol.
 
+## Odds e controle de armazenamento
+
+A integração opcional com a The Odds API usa `THE_ODDS_API_KEY`. A coleta é
+explícita para não consumir a cota gratuitamente em cada abertura do painel:
+
+```powershell
+futebol-analytics coletar-odds --liga premier_league
+futebol-analytics coletar-odds --liga brasileirao
+```
+
+Nesta primeira versão, a coleta automática cobre `h2h` e total de gols. O mercado
+"ambas marcam" exige uma chamada individual por evento e foi deixado fora para
+não exceder os 500 créditos mensais do plano gratuito.
+
+O banco preserva os consensos de abertura, aproximadamente 24 horas antes e
+fechamento. O JSON bruto expira em 7 dias e os registros por casa expiram em 30
+dias. As partidas, previsões, avaliações e odds consolidadas são permanentes.
+
+```powershell
+futebol-analytics banco-uso
+futebol-analytics banco-limpar
+```
+
+O workflow `.github/workflows/odds-collection.yml` coleta as duas ligas três
+vezes ao dia. Usando uma região e dois mercados, o consumo planejado é de cerca
+de 360 créditos em um mês de 30 dias. O workflow `database-maintenance.yml`
+executa a limpeza aos domingos. Para ativá-los, cadastre `FUTEBOL_DATABASE_URL`
+e `THE_ODDS_API_KEY` em **Settings → Secrets and variables → Actions** no GitHub.
+No Streamlit, cadastre também `THE_ODDS_API_KEY` nos secrets do aplicativo para
+habilitar o botão de coleta manual.
+
 ```powershell
 .\.venv\Scripts\futebol-analytics.exe coletar-atuais --provedor football-data --data 2026-09-14 --saida reports/football_data_2026-09-14.json
 .\.venv\Scripts\futebol-analytics.exe coletar-atuais --provedor sportmonks --data 2026-09-14 --saida reports/sportmonks_2026-09-14.json

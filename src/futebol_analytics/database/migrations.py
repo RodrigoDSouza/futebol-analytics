@@ -3,7 +3,7 @@
 import psycopg
 
 
-def migrate(connection: psycopg.Connection, *, target: int = 4) -> None:
+def migrate(connection: psycopg.Connection, *, target: int = 5) -> None:
     # Serializa inicializações concorrentes até o commit/rollback da transação.
     connection.execute("SELECT pg_advisory_xact_lock(7062026)")
     connection.execute("""
@@ -36,6 +36,71 @@ def migrate(connection: psycopg.Connection, *, target: int = 4) -> None:
             )
         """)
         connection.execute("INSERT INTO futebol_migracoes (versao) VALUES (4)")
+    if target >= 5 and not connection.execute("SELECT 1 FROM futebol_migracoes WHERE versao = 5").fetchone():
+        _version_five(connection)
+
+
+def _version_five(connection: psycopg.Connection) -> None:
+    """Odds compactas permanentes e detalhes com retenção limitada."""
+    connection.execute("""
+        CREATE TABLE futebol_odds_eventos (
+            provedor text NOT NULL, liga text NOT NULL, evento_id text NOT NULL,
+            inicio timestamptz NOT NULL, mandante text NOT NULL, visitante text NOT NULL,
+            atualizado_em timestamptz NOT NULL DEFAULT clock_timestamp(),
+            PRIMARY KEY (provedor, liga, evento_id),
+            CHECK (mandante <> visitante)
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE futebol_odds_capturas (
+            id uuid PRIMARY KEY, provedor text NOT NULL,
+            capturado_em timestamptz NOT NULL, expira_em timestamptz NOT NULL,
+            conteudo jsonb NOT NULL CHECK (jsonb_typeof(conteudo) = 'object'),
+            CHECK (expira_em > capturado_em)
+        )
+    """)
+    connection.execute("CREATE INDEX futebol_odds_capturas_expira ON futebol_odds_capturas(expira_em)")
+    connection.execute("""
+        CREATE TABLE futebol_odds_detalhes (
+            provedor text NOT NULL, liga text NOT NULL, evento_id text NOT NULL,
+            capturado_em timestamptz NOT NULL, casa text NOT NULL,
+            mercado text NOT NULL, selecao text NOT NULL, linha numeric NOT NULL DEFAULT 0,
+            odd numeric NOT NULL CHECK (odd > 1),
+            FOREIGN KEY (provedor, liga, evento_id)
+                REFERENCES futebol_odds_eventos(provedor, liga, evento_id) ON DELETE CASCADE,
+            PRIMARY KEY (provedor, liga, evento_id, capturado_em, casa, mercado, selecao, linha)
+        )
+    """)
+    connection.execute("CREATE INDEX futebol_odds_detalhes_tempo ON futebol_odds_detalhes(capturado_em)")
+    connection.execute("""
+        CREATE TABLE futebol_odds_consensos (
+            provedor text NOT NULL, liga text NOT NULL, evento_id text NOT NULL,
+            checkpoint text NOT NULL CHECK (checkpoint IN ('abertura', '24h', 'fechamento')),
+            mercado text NOT NULL, selecao text NOT NULL, linha numeric NOT NULL DEFAULT 0,
+            observado_em timestamptz NOT NULL, casas integer NOT NULL CHECK (casas > 0),
+            odd_mediana numeric NOT NULL CHECK (odd_mediana > 1),
+            odd_melhor numeric NOT NULL CHECK (odd_melhor > 1),
+            probabilidade_justa numeric CHECK (probabilidade_justa > 0 AND probabilidade_justa < 1),
+            FOREIGN KEY (provedor, liga, evento_id)
+                REFERENCES futebol_odds_eventos(provedor, liga, evento_id) ON DELETE CASCADE,
+            PRIMARY KEY (provedor, liga, evento_id, checkpoint, mercado, selecao, linha)
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE futebol_previsoes (
+            id uuid PRIMARY KEY, provedor text NOT NULL, liga text NOT NULL, evento_id text NOT NULL,
+            calculado_em timestamptz NOT NULL, modelo text NOT NULL, versao text NOT NULL,
+            mercado text NOT NULL, selecao text NOT NULL, linha numeric NOT NULL DEFAULT 0,
+            probabilidade numeric NOT NULL CHECK (probabilidade > 0 AND probabilidade < 1),
+            resultado smallint CHECK (resultado IN (0, 1)), avaliado_em timestamptz,
+            evidencia jsonb NOT NULL DEFAULT '{}'::jsonb,
+            FOREIGN KEY (provedor, liga, evento_id)
+                REFERENCES futebol_odds_eventos(provedor, liga, evento_id) ON DELETE CASCADE,
+            UNIQUE (provedor, liga, evento_id, modelo, versao, mercado, selecao, linha)
+        )
+    """)
+    connection.execute("CREATE INDEX futebol_previsoes_avaliacao ON futebol_previsoes(avaliado_em, calculado_em)")
+    connection.execute("INSERT INTO futebol_migracoes (versao) VALUES (5)")
 
 
 def _version_two(connection: psycopg.Connection) -> None:

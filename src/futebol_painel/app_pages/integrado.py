@@ -21,6 +21,8 @@ from futebol_analytics.database.csv_store import read_csv
 from futebol_analytics.database.forecast import upcoming, forecast
 from futebol_analytics.database.league_rows import read_brasileirao_goals, read_brasileirao_schedule
 from futebol_analytics.daily import plan
+from futebol_analytics.api.the_odds import collect_odds
+from futebol_analytics.database.market_store import save_odds, storage_report
 
 
 COVERAGE_LABELS = {
@@ -34,9 +36,9 @@ COVERAGE_LABELS = {
 }
 
 st.caption('Acompanhe Premier League e Brasileirão, consulte a agenda e avalie modelos com dados locais.')
-focus_tab, agenda_tab, csv_tab, poisson_tab = st.tabs([
+focus_tab, agenda_tab, csv_tab, poisson_tab, database_tab = st.tabs([
     'Premier e Brasileirão', 'Agenda e planejamento',
-    'Histórico europeu e validação', 'Poisson brasileiro'])
+    'Histórico europeu e validação', 'Poisson brasileiro', 'Uso do banco'])
 
 
 def store():
@@ -344,3 +346,46 @@ with focus_tab:
             st.caption('Avaliação baseada nos jogos disponíveis do Brasileirão 2026. O histórico europeu não está publicado neste banco.')
         st.warning('O modelo não está aprovado para indicações. Compare o Brier do modelo com a referência simples da liga.')
         download(focused, 'Baixar avaliação', 'avaliacao_foco')
+
+with focus_tab:
+    st.divider()
+    st.subheader('Odds pré-jogo')
+    st.caption('Coleta explícita da The Odds API. Cada clique consome créditos do plano do provedor.')
+    odds_league = st.selectbox('Liga para coletar odds', ['premier_league', 'brasileirao'],
+                               format_func=lambda value: {'premier_league': 'Premier League',
+                                                          'brasileirao': 'Brasileirão'}[value])
+    if st.button('Coletar e armazenar odds'):
+        try:
+            with st.spinner('Consultando e normalizando as cotações...'):
+                db = store()
+                db.initialize()
+                capture = collect_odds(odds_league)
+                saved = save_odds(db, capture)
+                st.session_state['odds_ultima_coleta'] = {**saved,
+                    'liga': odds_league, 'creditos_restantes': capture['creditos_restantes'],
+                    'capturado_em': capture['capturado_em']}
+        except (ValueError, DatabaseError):
+            st.error('Não foi possível coletar as odds. Confira THE_ODDS_API_KEY, mercados, cota e banco.')
+    if st.session_state.get('odds_ultima_coleta'):
+        st.success('Odds normalizadas e armazenadas.')
+        st.write(st.session_state['odds_ultima_coleta'])
+    st.info('Os consensos de abertura, 24 horas e fechamento são permanentes. JSON bruto: 7 dias; detalhes por casa: 30 dias.')
+
+with database_tab:
+    st.subheader('Armazenamento do PostgreSQL')
+    st.caption('O percentual usa 0,5 GB como referência do plano gratuito atual do Neon.')
+    if st.button('Medir uso do banco'):
+        try:
+            st.session_state['relatorio_armazenamento'] = storage_report(store())
+        except DatabaseError:
+            st.error('Não foi possível medir o banco hospedado.')
+    database_usage = st.session_state.get('relatorio_armazenamento')
+    if database_usage:
+        st.write({
+            'uso total': f"{database_usage['total_bytes'] / 1_000_000:.2f} MB",
+            'percentual da referência': f"{database_usage['percentual_limite']:.1f}%",
+            'nível': database_usage['nivel'],
+        })
+        st.progress(min(database_usage['percentual_limite'] / 100, 1.0))
+        st.dataframe([{'tabela': row['tabela'], 'tamanho': f"{row['bytes'] / 1_000_000:.2f} MB"}
+                      for row in database_usage['tabelas']], hide_index=True, width='stretch')

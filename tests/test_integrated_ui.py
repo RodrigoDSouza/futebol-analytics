@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 import pytest
 
@@ -31,7 +32,7 @@ def test_focus_view_renders_both_markets_from_existing_report(monkeypatch):
     fixture = {'inicio': '2026-09-18T19:00:00+00:00', 'mandante': 'A', 'visitante': 'B',
                'taxa_liga_over_1_5': 0.5, 'taxa_liga_over_2_5': 0.5,
                'taxa_liga_ambos_marcam': 0.5}
-    report = {'calculado_em': '2026-09-15T12:00:00+00:00',
+    report = {'calculado_em': datetime.now(timezone.utc).isoformat(),
               'taxas': {'premier_league': rate, 'brasileirao': rate},
               'taxas_over_1_5': {'premier_league': rate, 'brasileirao': rate},
               'taxas_ambos_marcam': {'premier_league': rate, 'brasileirao': rate},
