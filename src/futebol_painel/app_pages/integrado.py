@@ -134,7 +134,10 @@ with csv_tab:
         summary_cols[0].metric('Jogos no arquivo', total)
         summary_cols[1].metric('Último jogo registrado', last_game.strftime('%d/%m/%Y'))
         summary_cols[2].metric('Arquivo recebido em', observed.strftime('%d/%m/%Y'))
-        st.caption('Este é o CSV local da temporada escolhida. Para a agenda atual da Premier, use a aba “Premier e Brasileirão”.')
+        if 'api.football-data.org' in data['arquivo']['origem']:
+            st.caption('Placares fornecidos por football-data.org. Esta fonte cobre gols; escanteios, cartões e finalizações não estão disponíveis.')
+        else:
+            st.caption('Este é o CSV local da temporada escolhida. Para a agenda atual da Premier, use a aba “Premier e Brasileirão”.')
         with st.expander('Ver cobertura das estatísticas do arquivo'):
             st.write(f'“{total} de {total}” significa que todos os {total} jogos do CSV têm esse campo preenchido. Não é média de gols, escanteios ou finalizações.')
             st.dataframe([{'estatística': COVERAGE_LABELS.get(field, field),
