@@ -30,7 +30,9 @@ from futebol_analytics.analysis.tracker import track_focus
 from futebol_analytics.analysis.backtest import backtest
 from futebol_analytics.analysis.historical_odds import compare_historical_odds
 from futebol_analytics.api.the_odds import collect_odds, SPORTS as ODDS_LEAGUES
-from futebol_analytics.database.market_store import save_odds, cleanup, storage_report
+from futebol_analytics.database.market_store import (save_odds, cleanup, storage_report,
+    upcoming_odds, save_predictions, evaluate_predictions)
+from futebol_analytics.analysis.opportunities import rank_opportunities
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -87,6 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("banco-iniciar", help="Cria a tabela de capturas no PostgreSQL configurado")
     sub = commands.add_parser("coletar-odds", help="Coleta e normaliza odds pré-jogo")
     sub.add_argument("--liga", choices=list(ODDS_LEAGUES), required=True)
+    sub = commands.add_parser("atualizar-previsoes",
+                              help="Calcula jogos armazenados e avalia previsões encerradas")
+    sub.add_argument("--liga", choices=list(ODDS_LEAGUES), required=True)
     commands.add_parser("banco-limpar", help="Aplica a retenção de 7 dias para JSON e 30 dias para odds detalhadas")
     commands.add_parser("banco-uso", help="Mostra o armazenamento por tabela e o percentual do limite de referência")
     commands.add_parser("normalizar-local", help="Reconstrói tabelas derivadas usando somente capturas locais")
@@ -124,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.command in ("coletar-odds", "banco-limpar", "banco-uso"):
+        if args.command in ("coletar-odds", "atualizar-previsoes", "banco-limpar", "banco-uso"):
             store = SnapshotStore(load_database_settings())
             store.initialize()
             if args.command == "coletar-odds":
@@ -132,6 +137,30 @@ def main(argv: list[str] | None = None) -> int:
                 result = {**save_odds(store, capture),
                           "liga": args.liga,
                           "creditos_restantes": capture["creditos_restantes"]}
+            elif args.command == "atualizar-previsoes":
+                today = datetime.now(ZoneInfo('America/Sao_Paulo')).date()
+                quotes = upcoming_odds(store, args.liga)
+                fixtures = []
+                if args.liga == "brasileirao":
+                    brazil = read_brasileirao_goals(store, str(today.year))
+                    history = brazil["partidas"]
+                    fixtures = [dict(game, origem_agenda="dados-futebol") for game in
+                        read_brasileirao_schedule(store, brazil["campeonato_id"],
+                                                  str(today.year), datetime.now(timezone.utc), days=14)]
+                else:
+                    history = []
+                    for season in (f"{today.year-1}/{today.year}", f"{today.year}/{today.year+1}"):
+                        try:
+                            history.extend(read_csv(store, season, "E0")["partidas"])
+                        except ValueError:
+                            pass
+                    if not history:
+                        raise ValueError("Histórico da Premier indisponível.")
+                evaluation = evaluate_predictions(store, args.liga, history)
+                report = rank_opportunities(history, quotes, today=today, fixtures=fixtures)
+                result = {"liga": args.liga, "jogos_calculados": len(report["resumo_jogos"]),
+                          "previsoes_registradas": save_predictions(store, args.liga, report),
+                          "avaliadas_agora": evaluation["avaliadas_agora"]}
             elif args.command == "banco-limpar":
                 result = cleanup(store)
             else:

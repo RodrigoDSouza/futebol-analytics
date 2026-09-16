@@ -44,6 +44,8 @@ def test_ranking_abstains_when_validation_does_not_pass():
     assert summary["vitoria_mandante"] + summary["empate"] + summary["vitoria_visitante"] == pytest.approx(1)
     assert 0 <= summary["over_1.5"] <= 1
     assert summary["confianca"] in {"baixa", "moderada"}
+    assert summary["cobertura_mercado"] == "disponível"
+    assert summary["estado_decisao"] in {"acompanhar", "sem valor validado"}
     assert set(report["validacoes"]) == {"over_1.5", "over_2.5", "ambas_marcam"}
 
 
@@ -55,6 +57,7 @@ def test_fixtures_receive_model_even_without_any_odds():
     assert len(report["resumo_jogos"]) == 1
     assert report["resumo_jogos"][0]["origem_agenda"] == "dados-futebol"
     assert report["resumo_jogos"][0]["possui_evento_odds"] is False
+    assert report["resumo_jogos"][0]["estado_decisao"] == "sem preço de mercado"
     assert report["candidatos_avaliados"] == 0
 
 

@@ -29,3 +29,10 @@ jobs:
           fi
           futebol-analytics coletar-odds --liga premier_league
           futebol-analytics coletar-odds --liga brasileirao
+      - name: Gerar e avaliar previsões armazenadas
+        continue-on-error: true
+        env:
+          FUTEBOL_DATABASE_URL: ${{ secrets.FUTEBOL_DATABASE_URL }}
+        run: |
+          futebol-analytics atualizar-previsoes --liga premier_league
+          futebol-analytics atualizar-previsoes --liga brasileirao

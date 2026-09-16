@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 
 from futebol_analytics.database.store import SnapshotStore
 from futebol_analytics.analysis.opportunities import canonical_team
+from futebol_analytics.analysis.calibration import calibration_report, grouped_calibration
 
 
 def checkpoint(kickoff: datetime, captured: datetime) -> str | None:
@@ -265,7 +266,17 @@ def evaluate_predictions(store: SnapshotStore, league: str, history: list[dict[s
             FROM futebol_previsoes WHERE provedor='the-odds-api' AND liga=%s
             GROUP BY mercado, selecao, linha ORDER BY mercado, linha, selecao
         """, (league,)).fetchall()
-    return {"avaliadas_agora": len(updates), "desempenho": [
+        evaluated = connection.execute("""
+            SELECT mercado, selecao, linha, probabilidade, resultado
+            FROM futebol_previsoes
+            WHERE provedor='the-odds-api' AND liga=%s AND resultado IS NOT NULL
+            ORDER BY calculado_em, evento_id, mercado, selecao, linha
+        """, (league,)).fetchall()
+    evaluated = [{**row, "linha": float(row["linha"]),
+                  "probabilidade": float(row["probabilidade"]),
+                  "resultado": int(row["resultado"])} for row in evaluated]
+    return {"avaliadas_agora": len(updates), "calibracao_geral": calibration_report(evaluated),
+            "calibracao_por_mercado": grouped_calibration(evaluated), "desempenho": [
         {**row, "linha": float(row["linha"]),
          "brier": float(row["brier"]) if row["brier"] is not None else None}
         for row in performance]}

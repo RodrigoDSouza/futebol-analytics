@@ -449,6 +449,9 @@ with decision_tab:
                     'jogo': f"{item['mandante']} × {item['visitante']}",
                     'fonte da agenda': {'dados-futebol': 'Dados Futebol', 'football-data': 'Football-Data',
                                         'odds': 'The Odds API'}.get(item.get('origem_agenda'), 'Agenda'),
+                    'situação': item['estado_decisao'],
+                    'qualidade': item['qualidade_dados'],
+                    'odds': item['cobertura_mercado'],
                     'vitória · mandante': 100 * item['vitoria_mandante'],
                     'empate': 100 * item['empate'],
                     'vitória · visitante': 100 * item['vitoria_visitante'],
@@ -467,6 +470,30 @@ with decision_tab:
                                                 'mais de 2,5 gols', 'ambos marcam',
                                                 'incerteza aprox.')})
                 st.caption(f"Probabilidades registradas antes dos jogos: {ranking.get('previsoes_registradas', 0)}. A incerteza é uma aproximação baseada na menor amostra casa/fora, não um intervalo calibrado.")
+                selected_game = st.selectbox('Detalhar partida', ranking['resumo_jogos'],
+                    format_func=lambda item: f"{item['mandante']} × {item['visitante']} · {item['estado_decisao']}",
+                    key=f'detalhe_partida_{odds_league}')
+                with st.expander('Diagnóstico da partida', expanded=True):
+                    detail_metrics = st.columns(4)
+                    detail_metrics[0].metric('Gols esperados',
+                        f"{selected_game['gols_esperados_mandante'] + selected_game['gols_esperados_visitante']:.2f}")
+                    detail_metrics[1].metric('Amostra casa/fora',
+                        f"{selected_game['amostra_mandante']}/{selected_game['amostra_visitante']}")
+                    detail_metrics[2].metric('Qualidade', selected_game['qualidade_dados'])
+                    detail_metrics[3].metric('Situação', selected_game['estado_decisao'])
+                    st.dataframe([{'mercado': 'Vitória do mandante', 'probabilidade': 100 * selected_game['vitoria_mandante']},
+                                  {'mercado': 'Empate', 'probabilidade': 100 * selected_game['empate']},
+                                  {'mercado': 'Vitória do visitante', 'probabilidade': 100 * selected_game['vitoria_visitante']},
+                                  {'mercado': 'Mais de 1,5 gols', 'probabilidade': 100 * selected_game['over_1.5']},
+                                  {'mercado': 'Mais de 2,5 gols', 'probabilidade': 100 * selected_game['over_2.5']},
+                                  {'mercado': 'Ambos marcam', 'probabilidade': 100 * selected_game['ambas_marcam']}],
+                                 hide_index=True, width='stretch',
+                                 column_config={'probabilidade': st.column_config.ProgressColumn(
+                                     min_value=0, max_value=100, format='%.1f%%')})
+                    if selected_game['estado_decisao'] == 'sem preço de mercado':
+                        st.info('Existe previsão histórica, mas ainda não há preço para medir valor esperado.')
+                    elif selected_game['estado_decisao'] == 'sem valor validado':
+                        st.info('Há odds, mas nenhuma seleção passou simultaneamente pela validação, vantagem e valor esperado mínimos.')
                 with st.expander('Como interpretar esta tabela'):
                     st.write('Vitória do mandante, empate e vitória do visitante somam 100%. Mais de 1,5, mais de 2,5 e ambos marcam são mercados separados e não devem ser somados.')
                     st.write('O modelo pondera partidas recentes com meia-vida de 180 dias e regulariza amostras pequenas pela média da liga.')
@@ -476,6 +503,19 @@ with decision_tab:
                         st.caption(f"Previsões avaliadas nesta execução: {published.get('avaliadas_agora', 0)}. Diferente do backtest, estas previsões foram armazenadas antes das partidas.")
                         st.dataframe(published['desempenho'], hide_index=True, width='stretch',
                             column_config={'brier': st.column_config.NumberColumn(format='%.4f')})
+                        calibration = published.get('calibracao_geral') or {}
+                        if calibration.get('avaliadas'):
+                            calibration_metrics = st.columns(4)
+                            calibration_metrics[0].metric('Previsões avaliadas', calibration['avaliadas'])
+                            calibration_metrics[1].metric('Brier', f"{calibration['brier']:.4f}")
+                            calibration_metrics[2].metric('Log Loss', f"{calibration['log_loss']:.4f}")
+                            calibration_metrics[3].metric('Erro de calibração',
+                                                          f"{calibration['erro_calibracao']:.1%}")
+                            st.caption('O erro de calibração compara a probabilidade média prevista com a frequência observada em faixas de 10 pontos percentuais; menor é melhor.')
+                            st.dataframe(calibration['faixas'], hide_index=True, width='stretch',
+                                column_config={name: st.column_config.NumberColumn(format='%.1f%%')
+                                    for name in ('probabilidade_media', 'frequencia_observada',
+                                                 'erro_absoluto')})
             validation_rows = [{
                 'mercado': {'over_1.5': 'Mais de 1,5 gols', 'over_2.5': 'Mais de 2,5 gols',
                             'ambas_marcam': 'Ambos marcam'}[key],

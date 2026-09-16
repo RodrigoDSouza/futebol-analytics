@@ -261,6 +261,16 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
             incerteza_aproximada=uncertainty,
             confianca="moderada" if effective_sample >= 10 else "baixa")
     summaries.sort(key=lambda item: (item["inicio"], item["mandante"], item["visitante"]))
+    eligible_events = {item["evento_id"] for item in ranked}
+    quoted_events = {str(item["evento_id"]) for item in odds}
+    for item in summaries:
+        effective_sample = min(item["amostra_mandante"], item["amostra_visitante"])
+        item["cobertura_mercado"] = "disponível" if item["evento_id"] in quoted_events else "sem odds"
+        item["qualidade_dados"] = ("adequada" if effective_sample >= 10
+                                    else "limitada" if effective_sample >= MIN_VENUE else "insuficiente")
+        item["estado_decisao"] = ("acompanhar" if item["evento_id"] in eligible_events
+                                  else "sem valor validado" if item["evento_id"] in quoted_events
+                                  else "sem preço de mercado")
     return {"modelo": "poisson_mando_temporal_v2", "oportunidades": ranked,
             "candidatos_avaliados": len(candidates), "eventos_sem_modelo": rejected,
             "pre_selecao_eventos": shortlist, "resumo_jogos": summaries,
