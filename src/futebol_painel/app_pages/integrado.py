@@ -395,17 +395,36 @@ with focus_tab:
                 'casas': row['casas'],
             })
         if display_rows:
-            with st.expander('Ver detalhes das odds armazenadas'):
-                st.dataframe(display_rows, hide_index=True, width='stretch',
-                    column_config={
-                        'odd de abertura': st.column_config.NumberColumn(format='%.2f'),
-                        'odd atual · mediana': st.column_config.NumberColumn(format='%.2f'),
-                        'melhor odd observada': st.column_config.NumberColumn(format='%.2f'),
-                        'probabilidade justa · mercado': st.column_config.NumberColumn(format='%.1f%%'),
-                        'benchmark histórico · liga': st.column_config.NumberColumn(format='%.1f%%'),
-                        'diferença · p.p.': st.column_config.NumberColumn(format='%+.1f'),
-                    })
-                st.caption('A probabilidade de mercado remove a margem do conjunto de cotações. O benchmark da liga é uma frequência histórica igual para todos os confrontos e ainda não comprova vantagem.')
+            grouped_market = {}
+            for row in market_rows:
+                item = grouped_market.setdefault(row['evento_id'], {
+                    'início': row['inicio'].astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m %H:%M'),
+                    'jogo': f"{row['mandante']} × {row['visitante']}",
+                    'mandante': row['mandante'], 'visitante': row['visitante']})
+                probability = 100 * row['probabilidade_justa']
+                selection = row['selecao'].casefold()
+                if row['mercado'] == 'h2h':
+                    if selection == 'draw': item['empate · mercado'] = probability
+                    elif row['selecao'] == row['mandante']: item['vitória mandante · mercado'] = probability
+                    elif row['selecao'] == row['visitante']: item['vitória visitante · mercado'] = probability
+                elif row['mercado'] in ('totals', 'alternate_totals') and selection == 'over':
+                    if row['linha'] == 1.5: item['+1,5 · mercado'] = probability
+                    elif row['linha'] == 2.5: item['+2,5 · mercado'] = probability
+                elif row['mercado'] == 'btts' and selection in ('yes', 'sim'):
+                    item['ambos marcam · mercado'] = probability
+            st.markdown('##### Visão compacta do mercado')
+            market_summary = [{key: value for key, value in item.items()
+                               if key not in ('mandante', 'visitante')}
+                              for item in grouped_market.values()]
+            probability_columns = ('vitória mandante · mercado', 'empate · mercado',
+                'vitória visitante · mercado', '+1,5 · mercado', '+2,5 · mercado',
+                'ambos marcam · mercado')
+            st.dataframe(market_summary, hide_index=True, width='stretch',
+                column_config={name: st.column_config.NumberColumn(format='%.1f%%')
+                               for name in probability_columns})
+            with st.expander('Dados técnicos das odds'):
+                st.caption(f"{len(market_rows)} registros de mercado consolidados em {len(grouped_market)} jogos. A tabela repetida por seleção foi removida da interface.")
+                download(market_rows, 'Baixar odds detalhadas', f'odds_detalhadas_{odds_league}')
         else:
             st.info('Nenhum evento futuro com consenso armazenado foi encontrado para esta liga.')
         st.markdown('#### Ranking experimental de oportunidades')
