@@ -47,6 +47,31 @@ def test_ranking_abstains_when_validation_does_not_pass():
     assert set(report["validacoes"]) == {"over_1.5", "over_2.5", "ambas_marcam"}
 
 
+def test_fixtures_receive_model_even_without_any_odds():
+    fixtures = [{"id": 99, "data_hora": "2027-01-02T18:00:00+00:00",
+                 "mandante": "Alpha", "visitante": "Bravo",
+                 "origem_agenda": "dados-futebol"}]
+    report = rank_opportunities(history(), [], today=date(2027, 1, 1), fixtures=fixtures)
+    assert len(report["resumo_jogos"]) == 1
+    assert report["resumo_jogos"][0]["origem_agenda"] == "dados-futebol"
+    assert report["resumo_jogos"][0]["possui_evento_odds"] is False
+    assert report["candidatos_avaliados"] == 0
+
+
+def test_fixture_is_reconciled_with_matching_odds_event():
+    fixtures = [{"id": 99, "data_hora": "2027-01-02T18:00:00+00:00",
+                 "mandante": "Alpha", "visitante": "Bravo",
+                 "origem_agenda": "dados-futebol"}]
+    quote = {"evento_id": "odds-1", "inicio": datetime(2027, 1, 2, 20, tzinfo=timezone.utc),
+             "mandante": "Alpha FC", "visitante": "Bravo", "mercado": "totals",
+             "selecao": "Over", "linha": 2.5, "probabilidade_justa": .5,
+             "odd_melhor": 2.0, "odd_mediana": 1.9, "casas": 4}
+    report = rank_opportunities(history(), [quote], today=date(2027, 1, 1), fixtures=fixtures)
+    assert len(report["resumo_jogos"]) == 1
+    assert report["resumo_jogos"][0]["evento_id"] == "odds-1"
+    assert report["resumo_jogos"][0]["possui_evento_odds"] is True
+
+
 def test_risk_plan_caps_daily_exposure_and_correlated_markets():
     base = {"probabilidade_modelo": .60, "odd_referencia": 2.0,
             "valor_esperado": .20, "jogo": "A × B", "mercado": "+2,5"}

@@ -68,3 +68,14 @@ def test_save_predictions_records_future_probabilities_once():
     assert len(captured["payload"]) == 6
     assert "ON CONFLICT" in captured["statement"]
     assert captured["payload"][0]["evidencia"]["inicio"].endswith("+00:00")
+
+
+def test_save_predictions_skips_games_without_odds_event():
+    class ForbiddenStore:
+        def _connection(self):
+            pytest.fail("Não deve abrir conexão quando não há evento de odds")
+    report = {"modelo": "poisson_mando_temporal_v2", "resumo_jogos": [{
+        "evento_id": "agenda-1", "inicio": datetime(2026, 9, 20, tzinfo=timezone.utc),
+        "possui_evento_odds": False, "vitoria_mandante": .5}]}
+    assert save_predictions(ForbiddenStore(), "brasileirao", report,
+        calculated_at=datetime(2026, 9, 16, tzinfo=timezone.utc)) == 0

@@ -182,6 +182,10 @@ def save_predictions(store: SnapshotStore, league: str, report: dict[str, Any], 
              ("over_2.5", "totals", "over", 2.5),
              ("ambas_marcam", "btts", "sim", 0))
     for game in report.get("resumo_jogos") or []:
+        # A tabela referencia futebol_odds_eventos. Jogos vindos apenas da agenda
+        # podem ser calculados e exibidos, mas ainda não possuem essa identidade.
+        if not game.get("possui_evento_odds", True):
+            continue
         if _time(game["inicio"]) <= calculated_at:
             continue
         evidence = {key: game.get(key) for key in ("mandante", "visitante", "inicio",

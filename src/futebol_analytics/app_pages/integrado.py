@@ -46,6 +46,43 @@ def store():
     return SnapshotStore(load_database_settings())
 
 
+def decision_inputs(db, league, today, market_rows):
+    """Monta histórico e agenda sem tornar as odds obrigatórias para o modelo."""
+    if league == 'brasileirao':
+        brazil = read_brasileirao_goals(db, str(today.year))
+        fixtures = read_brasileirao_schedule(
+            db, brazil['campeonato_id'], str(today.year), datetime.now(ZoneInfo('UTC')), days=14)
+        return brazil['partidas'], [dict(game, origem_agenda='dados-futebol') for game in fixtures]
+
+    histories = []
+    for selected_season in ('2025/2026', '2026/2027'):
+        try:
+            histories.extend(read_csv(db, selected_season, 'E0')['partidas'])
+        except ValueError:
+            pass
+    if not histories:
+        raise ValueError('Histórico da Premier indisponível.')
+    tracking = st.session_state.get('acompanhamento_foco') or {}
+    fixtures = []
+    for game in tracking.get('agenda_7_dias', {}).get('premier_league', []):
+        fixtures.append({'id': game.get('id') or f"pl:{game.get('inicio')}:{game.get('mandante')}",
+                         'inicio': game.get('inicio'), 'mandante': game.get('mandante'),
+                         'visitante': game.get('visitante'), 'origem_agenda': 'football-data'})
+    return histories, fixtures
+
+
+def calculate_decision(db, league, today, market_rows):
+    histories, fixtures = decision_inputs(db, league, today, market_rows)
+    db.initialize()
+    performance = evaluate_predictions(db, league, histories)
+    result = rank_opportunities(histories, market_rows, today=today, fixtures=fixtures)
+    result['previsoes_registradas'] = save_predictions(db, league, result)
+    result['desempenho_publicado'] = performance
+    result['jogos_agenda'] = len(fixtures)
+    result['jogos_com_odds'] = len({row['evento_id'] for row in market_rows})
+    return result
+
+
 def download(report, label, key):
     st.download_button(label, json.dumps(report, ensure_ascii=False, indent=2, default=str),
                        file_name=f'{key}.json', mime='application/json', key=f'download_{key}')
@@ -318,15 +355,21 @@ with decision_tab:
 - **Um quarto de Kelly:** reduz a sensibilidade a erros na probabilidade estimada.
 - **Sem recuperação de perdas:** o valor não aumenta depois de um resultado negativo.
 ''')
-    odds_league = st.selectbox('Liga para coletar odds', ['premier_league', 'brasileirao'],
+    odds_league = st.selectbox('Liga do painel', ['premier_league', 'brasileirao'],
                                format_func=lambda value: {'premier_league': 'Premier League',
                                                           'brasileirao': 'Brasileirão'}[value])
-    if st.button('Carregar próximos jogos e odds'):
+    if st.button('Atualizar painel de jogos', type='primary'):
         try:
-            st.session_state['odds_proximos'] = upcoming_odds(store(), odds_league)
-            st.session_state['odds_proximos_liga'] = odds_league
+            with st.spinner('Lendo agenda, histórico e odds armazenadas...'):
+                db = store()
+                market_rows = upcoming_odds(db, odds_league)
+                result = calculate_decision(db, odds_league, today, market_rows)
+                st.session_state['odds_proximos'] = market_rows
+                st.session_state['odds_proximos_liga'] = odds_league
+                st.session_state['ranking_oportunidades'] = result
+                st.session_state['ranking_oportunidades_liga'] = odds_league
         except (ValueError, DatabaseError):
-            st.error('Não foi possível ler os consensos de odds no PostgreSQL.')
+            st.error('Não foi possível atualizar o painel. Confira a agenda, o histórico e o PostgreSQL.')
     market_rows = (st.session_state.get('odds_proximos')
                    if st.session_state.get('odds_proximos_liga') == odds_league else None)
     if market_rows is not None:
@@ -378,29 +421,14 @@ with decision_tab:
                 st.caption(f"{len(market_rows)} registros de mercado consolidados em {len(grouped_market)} jogos. A tabela repetida por seleção foi removida da interface.")
                 download(market_rows, 'Baixar odds detalhadas', f'odds_detalhadas_{odds_league}')
         else:
-            st.info('Nenhum evento futuro com consenso armazenado foi encontrado para esta liga.')
+            st.info('Nenhuma odd futura foi encontrada. O modelo ainda pode calcular os jogos presentes na agenda.')
         st.markdown('#### Probabilidades calculadas pelo histórico')
         st.caption('Nosso modelo usa até 20 jogos anteriores por contexto, separa mandante em casa e visitante fora, pondera jogos recentes e regulariza pela média da liga.')
-        if st.button('Calcular probabilidades pelos últimos jogos', type='primary'):
+        if st.button('Recalcular modelo com os dados armazenados'):
             try:
                 with st.spinner('Calculando previsões e validação cronológica...'):
                     db = store()
-                    if odds_league == 'premier_league':
-                        histories = []
-                        for selected_season in ('2025/2026', '2026/2027'):
-                            try:
-                                histories.extend(read_csv(db, selected_season, 'E0')['partidas'])
-                            except ValueError:
-                                pass
-                        if not histories:
-                            raise ValueError('Histórico da Premier indisponível.')
-                    else:
-                        histories = read_brasileirao_goals(db, str(today.year))['partidas']
-                    db.initialize()
-                    performance = evaluate_predictions(db, odds_league, histories)
-                    result = rank_opportunities(histories, market_rows, today=today)
-                    result['previsoes_registradas'] = save_predictions(db, odds_league, result)
-                    result['desempenho_publicado'] = performance
+                    result = calculate_decision(db, odds_league, today, market_rows)
                     st.session_state['ranking_oportunidades'] = result
                     st.session_state['ranking_oportunidades_liga'] = odds_league
             except (ValueError, DatabaseError) as error:
@@ -411,6 +439,7 @@ with decision_tab:
             if ranking.get('resumo_jogos'):
                 approved_markets = sum(item['aprovado'] for item in ranking['validacoes'].values())
                 st.markdown('##### Nosso modelo · uma linha por jogo')
+                st.caption(f"Agenda encontrada: {ranking.get('jogos_agenda', 0)} jogo(s) · com odds armazenadas: {ranking.get('jogos_com_odds', 0)}. As probabilidades históricas independem das odds; a análise de valor exige preço de mercado.")
                 if approved_markets:
                     st.success(f'{approved_markets} mercado(s) superaram a referência histórica nesta validação.')
                 else:
@@ -418,6 +447,8 @@ with decision_tab:
                 st.dataframe([{
                     'início': item['inicio'].astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m %H:%M'),
                     'jogo': f"{item['mandante']} × {item['visitante']}",
+                    'fonte da agenda': {'dados-futebol': 'Dados Futebol', 'football-data': 'Football-Data',
+                                        'odds': 'The Odds API'}.get(item.get('origem_agenda'), 'Agenda'),
                     'vitória · mandante': 100 * item['vitoria_mandante'],
                     'empate': 100 * item['empate'],
                     'vitória · visitante': 100 * item['vitoria_visitante'],

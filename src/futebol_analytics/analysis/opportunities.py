@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 import math
 import re
 import unicodedata
@@ -150,7 +150,7 @@ def validate(rows: list[dict[str, Any]], market: str) -> dict[str, Any]:
 
 
 def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
-                       *, today: date) -> dict[str, Any]:
+                       *, today: date, fixtures: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Cruza previsões e consensos; mercados reprovados ou fracos são omitidos."""
     mappings = {
         ("totals", "Over", 1.5): ("over_1.5", False, "Mais de 1,5 gols"),
@@ -167,10 +167,39 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
     event_meta: dict[str, dict[str, Any]] = {}
     rejected: dict[str, str] = {}
     candidates = []
+    for fixture in fixtures or []:
+        event_id = str(fixture.get("evento_id") or fixture.get("id") or "").strip()
+        kickoff = fixture.get("inicio") or fixture.get("data_hora")
+        if isinstance(kickoff, str):
+            kickoff = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+        home, away = fixture.get("mandante"), fixture.get("visitante")
+        if not event_id or kickoff is None or not isinstance(home, str) or not isinstance(away, str):
+            continue
+        event_meta[event_id] = {"inicio": kickoff, "mandante": home, "visitante": away,
+                                "origem_agenda": fixture.get("origem_agenda", "agenda"),
+                                "possui_evento_odds": False}
+        try:
+            predictions[event_id] = predict_match(rows, home, away, today)
+        except ValueError as error:
+            rejected[event_id] = str(error)
     for quote in odds:
         event_id = str(quote["evento_id"])
-        event_meta.setdefault(event_id, {key: quote[key] for key in
-                              ("inicio", "mandante", "visitante")})
+        matched_fixture = next((key for key, meta in event_meta.items()
+            if key != event_id
+            and canonical_team(meta["mandante"]) == canonical_team(quote["mandante"])
+            and canonical_team(meta["visitante"]) == canonical_team(quote["visitante"])
+            and meta["inicio"].date() == quote["inicio"].date()), None)
+        if matched_fixture:
+            previous_meta = event_meta.pop(matched_fixture)
+            event_meta[event_id] = {**previous_meta, "inicio": quote["inicio"],
+                                    "possui_evento_odds": True}
+            if matched_fixture in predictions:
+                predictions[event_id] = predictions.pop(matched_fixture)
+            if matched_fixture in rejected:
+                rejected[event_id] = rejected.pop(matched_fixture)
+        event_meta.setdefault(event_id, {**{key: quote[key] for key in
+                              ("inicio", "mandante", "visitante")}, "origem_agenda": "odds",
+                              "possui_evento_odds": True})
         if event_id not in predictions and event_id not in rejected:
             try:
                 predictions[event_id] = predict_match(
