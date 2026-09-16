@@ -25,6 +25,8 @@ def test_prediction_resolves_provider_suffix_and_returns_markets():
     assert result["amostra"]["liga"] == 80
     assert 0 < result["probabilidades"]["over_1.5"] < 1
     assert result["gols_esperados"]["mandante"] > 0
+    assert resolve_team("Wolves", {"Wolverhampton Wanderers FC", "Fulham"}) == "Wolverhampton Wanderers FC"
+    assert result["amostra"]["meia_vida_dias"] == 180
 
 
 def test_ranking_abstains_when_validation_does_not_pass():
@@ -39,4 +41,5 @@ def test_ranking_abstains_when_validation_does_not_pass():
     summary = report["resumo_jogos"][0]
     assert summary["vitoria_mandante"] + summary["empate"] + summary["vitoria_visitante"] == pytest.approx(1)
     assert 0 <= summary["over_1.5"] <= 1
+    assert summary["confianca"] in {"baixa", "moderada"}
     assert set(report["validacoes"]) == {"over_1.5", "over_2.5", "ambas_marcam"}

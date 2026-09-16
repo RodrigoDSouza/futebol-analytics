@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from futebol_analytics.database.market_store import upcoming_odds
+from futebol_analytics.database.market_store import save_predictions, upcoming_odds
 
 
 class Result:
@@ -43,3 +43,28 @@ def test_upcoming_odds_normalizes_numeric_values():
 def test_upcoming_odds_rejects_invalid_scope(league, days):
     with pytest.raises(ValueError):
         upcoming_odds(Store(), league, days=days)
+
+
+def test_save_predictions_records_future_probabilities_once():
+    captured = {}
+    class PredictionConnection:
+        def execute(self, statement, params):
+            captured["statement"] = statement
+            captured["payload"] = params[0].obj
+    class PredictionContext:
+        def __enter__(self): return PredictionConnection()
+        def __exit__(self, *_): return False
+    class PredictionStore:
+        def _connection(self): return PredictionContext()
+    now = datetime(2026, 9, 16, tzinfo=timezone.utc)
+    report = {"modelo": "poisson_mando_temporal_v2", "resumo_jogos": [{
+        "evento_id": "e1", "inicio": datetime(2026, 9, 20, tzinfo=timezone.utc),
+        "mandante": "A", "visitante": "B", "vitoria_mandante": .5, "empate": .25,
+        "vitoria_visitante": .25, "over_1.5": .7, "over_2.5": .45,
+        "ambas_marcam": .52, "amostra_mandante": 10, "amostra_visitante": 9,
+        "ultima_partida": "2026-09-10", "incerteza_aproximada": .15,
+        "confianca": "baixa"}]}
+    assert save_predictions(PredictionStore(), "brasileirao", report, calculated_at=now) == 6
+    assert len(captured["payload"]) == 6
+    assert "ON CONFLICT" in captured["statement"]
+    assert captured["payload"][0]["evidencia"]["inicio"].endswith("+00:00")

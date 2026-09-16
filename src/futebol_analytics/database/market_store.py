@@ -6,10 +6,12 @@ from decimal import Decimal
 from statistics import median
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from psycopg.types.json import Jsonb
 
 from futebol_analytics.database.store import SnapshotStore
+from futebol_analytics.analysis.opportunities import canonical_team
 
 
 def checkpoint(kickoff: datetime, captured: datetime) -> str | None:
@@ -161,6 +163,108 @@ def upcoming_odds(store: SnapshotStore, league: str, *, now: datetime | None = N
     numeric = ("linha", "odd_abertura", "odd_mediana", "odd_melhor", "probabilidade_justa")
     return [{**row, **{key: float(row[key]) if row.get(key) is not None else None for key in numeric}}
             for row in rows]
+
+
+def save_predictions(store: SnapshotStore, league: str, report: dict[str, Any], *,
+                     calculated_at: datetime | None = None) -> int:
+    """Registra previsões pré-jogo de forma imutável por versão do modelo."""
+    if league not in ("premier_league", "brasileirao"):
+        raise ValueError("Liga inválida para registrar previsões.")
+    calculated_at = _time(calculated_at or datetime.now(timezone.utc))
+    model = str(report.get("modelo") or "").strip()
+    if not model:
+        raise ValueError("Relatório sem identificação do modelo.")
+    rows = []
+    specs = (("vitoria_mandante", "h2h", "mandante", 0),
+             ("empate", "h2h", "empate", 0),
+             ("vitoria_visitante", "h2h", "visitante", 0),
+             ("over_1.5", "totals", "over", 1.5),
+             ("over_2.5", "totals", "over", 2.5),
+             ("ambas_marcam", "btts", "sim", 0))
+    for game in report.get("resumo_jogos") or []:
+        if _time(game["inicio"]) <= calculated_at:
+            continue
+        evidence = {key: game.get(key) for key in ("mandante", "visitante", "inicio",
+            "amostra_mandante", "amostra_visitante", "ultima_partida",
+            "incerteza_aproximada", "confianca")}
+        if isinstance(evidence.get("inicio"), datetime):
+            evidence["inicio"] = evidence["inicio"].isoformat()
+        for field, market, selection, line in specs:
+            probability = game.get(field)
+            if type(probability) not in (int, float) or not 0 < probability < 1:
+                continue
+            rows.append({"id": str(uuid4()), "provedor": "the-odds-api", "liga": league,
+                "evento_id": str(game["evento_id"]), "calculado_em": calculated_at,
+                "modelo": model, "versao": model.rsplit("_", 1)[-1], "mercado": market,
+                "selecao": selection, "linha": line, "probabilidade": probability,
+                "evidencia": evidence})
+    if not rows:
+        return 0
+    with store._connection() as connection:
+        connection.execute("""
+            INSERT INTO futebol_previsoes
+                (id, provedor, liga, evento_id, calculado_em, modelo, versao,
+                 mercado, selecao, linha, probabilidade, evidencia)
+            SELECT id::uuid, provedor, liga, evento_id, calculado_em, modelo, versao,
+                   mercado, selecao, linha, probabilidade, evidencia
+            FROM jsonb_to_recordset(%s::jsonb) AS row(
+                id text, provedor text, liga text, evento_id text, calculado_em timestamptz,
+                modelo text, versao text, mercado text, selecao text, linha numeric,
+                probabilidade numeric, evidencia jsonb)
+            ON CONFLICT (provedor, liga, evento_id, modelo, versao, mercado, selecao, linha)
+            DO NOTHING
+        """, (Jsonb(_json_rows(rows)),))
+    return len(rows)
+
+
+def evaluate_predictions(store: SnapshotStore, league: str, history: list[dict[str, Any]], *,
+                         now: datetime | None = None) -> dict[str, Any]:
+    """Avalia previsões registradas usando placares posteriormente disponíveis."""
+    now = _time(now or datetime.now(timezone.utc))
+    with store._connection() as connection:
+        pending = connection.execute("""
+            SELECT p.id, p.evento_id, p.mercado, p.selecao, p.linha, p.probabilidade,
+                   e.inicio, e.mandante, e.visitante
+            FROM futebol_previsoes p JOIN futebol_odds_eventos e USING (provedor, liga, evento_id)
+            WHERE p.provedor='the-odds-api' AND p.liga=%s AND p.resultado IS NULL
+              AND e.inicio < %s
+        """, (league, now)).fetchall()
+        updates = []
+        for prediction in pending:
+            utc_date = prediction["inicio"].astimezone(timezone.utc).date().isoformat()
+            local_date = prediction["inicio"].astimezone(ZoneInfo("America/Sao_Paulo")).date().isoformat()
+            matches = [row for row in history if str(row["data"]) in (utc_date, local_date)
+                       and canonical_team(str(row["mandante"])) == canonical_team(prediction["mandante"])
+                       and canonical_team(str(row["visitante"])) == canonical_team(prediction["visitante"])]
+            if len(matches) != 1:
+                continue
+            match = matches[0]
+            home, away = match["gols_mandante"], match["gols_visitante"]
+            if prediction["mercado"] == "h2h":
+                result = {"mandante": home > away, "empate": home == away,
+                          "visitante": home < away}[prediction["selecao"]]
+            elif prediction["mercado"] == "totals":
+                result = home + away > float(prediction["linha"])
+            elif prediction["mercado"] == "btts":
+                result = home > 0 and away > 0
+            else:
+                continue
+            updates.append((int(result), now, prediction["id"]))
+        if updates:
+            with connection.cursor() as cursor:
+                cursor.executemany("""UPDATE futebol_previsoes SET resultado=%s, avaliado_em=%s
+                    WHERE id=%s AND resultado IS NULL""", updates)
+        performance = connection.execute("""
+            SELECT mercado, selecao, linha, count(*) AS previsoes,
+                   count(resultado) AS avaliadas,
+                   avg(power(probabilidade-resultado, 2)) FILTER (WHERE resultado IS NOT NULL) AS brier
+            FROM futebol_previsoes WHERE provedor='the-odds-api' AND liga=%s
+            GROUP BY mercado, selecao, linha ORDER BY mercado, linha, selecao
+        """, (league,)).fetchall()
+    return {"avaliadas_agora": len(updates), "desempenho": [
+        {**row, "linha": float(row["linha"]),
+         "brier": float(row["brier"]) if row["brier"] is not None else None}
+        for row in performance]}
 
 
 def _details(event: dict[str, Any], provider: str, league: str,

@@ -14,6 +14,7 @@ from futebol_analytics.models.poisson import markets
 MIN_LEAGUE = 30
 MIN_VENUE = 5
 PRIOR_MATCHES = 5
+HALF_LIFE_DAYS = 180
 MIN_BACKTEST = 30
 MIN_EDGE = 0.03
 MIN_EV = 0.03
@@ -27,14 +28,30 @@ def _name(value: str) -> str:
     return " ".join(word for word in words if word not in ignored)
 
 
+ALIASES = {
+    "wolves": "wolverhampton wanderers", "wolverhampton": "wolverhampton wanderers",
+    "brighton": "brighton and hove albion", "man city": "manchester city",
+    "man united": "manchester united", "newcastle": "newcastle united",
+    "west ham": "west ham united", "tottenham": "tottenham hotspur",
+    "nottingham": "nottingham forest", "athletico pr": "athletico paranaense",
+    "atletico mg": "atletico mineiro", "gremio fbpa": "gremio",
+    "vasco da gama": "vasco", "red bull bragantino": "bragantino",
+}
+
+
+def canonical_team(value: str) -> str:
+    normalized = _name(value)
+    return ALIASES.get(normalized, normalized)
+
+
 def resolve_team(team: str, candidates: set[str]) -> str | None:
     """Resolve apenas nomes inequívocos, evitando associar equipes por palpite."""
-    wanted = _name(team)
-    exact = [candidate for candidate in candidates if _name(candidate) == wanted]
+    wanted = canonical_team(team)
+    exact = [candidate for candidate in candidates if canonical_team(candidate) == wanted]
     if len(exact) == 1:
         return exact[0]
     contained = [candidate for candidate in candidates
-                 if wanted and (_name(candidate) in wanted or wanted in _name(candidate))]
+                 if wanted and (canonical_team(candidate) in wanted or wanted in canonical_team(candidate))]
     return contained[0] if len(contained) == 1 else None
 
 
@@ -49,9 +66,9 @@ def predict_match(rows: list[dict[str, Any]], home: str, away: str,
     if local_home is None or local_away is None or local_home == local_away:
         raise ValueError("Não foi possível associar as equipes ao histórico de forma inequívoca.")
     home_rows = sorted((row for row in valid if row["mandante"] == local_home),
-                       key=lambda row: str(row["data"]), reverse=True)[:10]
+                       key=lambda row: str(row["data"]), reverse=True)[:20]
     away_rows = sorted((row for row in valid if row["visitante"] == local_away),
-                       key=lambda row: str(row["data"]), reverse=True)[:10]
+                       key=lambda row: str(row["data"]), reverse=True)[:20]
     if len(valid) < MIN_LEAGUE or len(home_rows) < MIN_VENUE or len(away_rows) < MIN_VENUE:
         raise ValueError("Amostra insuficiente para este confronto.")
 
@@ -60,8 +77,13 @@ def predict_match(rows: list[dict[str, Any]], home: str, away: str,
     if league_home <= 0 or league_away <= 0:
         raise ValueError("Média de gols inválida no histórico.")
 
+    def weight(row: dict[str, Any]) -> float:
+        age = max(0, (cutoff - date.fromisoformat(str(row["data"]))).days)
+        return math.exp(-math.log(2) * age / HALF_LIFE_DAYS)
+
     def shrunk(sample: list[dict[str, Any]], field: str, prior: float) -> float:
-        return (sum(row[field] for row in sample) + PRIOR_MATCHES * prior) / (len(sample) + PRIOR_MATCHES)
+        effective = sum(weight(row) for row in sample)
+        return (sum(weight(row) * row[field] for row in sample) + PRIOR_MATCHES * prior) / (effective + PRIOR_MATCHES)
 
     home_scored = shrunk(home_rows, "gols_mandante", league_home)
     home_allowed = shrunk(home_rows, "gols_visitante", league_away)
@@ -71,10 +93,12 @@ def predict_match(rows: list[dict[str, Any]], home: str, away: str,
     lambda_away = league_away * (away_scored / league_away) * (home_allowed / league_away)
     result = markets(lambda_home, lambda_away)
     return {
-        "modelo": "poisson_mando_regularizado_v1",
+        "modelo": "poisson_mando_temporal_v2",
         "equipes_historico": {"mandante": local_home, "visitante": local_away},
         "amostra": {"liga": len(valid), "mandante_casa": len(home_rows),
-                    "visitante_fora": len(away_rows), "peso_prior": PRIOR_MATCHES},
+                    "visitante_fora": len(away_rows), "peso_prior": PRIOR_MATCHES,
+                    "meia_vida_dias": HALF_LIFE_DAYS,
+                    "ultima_partida": max(str(row["data"]) for row in valid)},
         "gols_esperados": {"mandante": lambda_home, "visitante": lambda_away},
         **result,
     }
@@ -113,6 +137,8 @@ def validate(rows: list[dict[str, Any]], market: str) -> dict[str, Any]:
     approved = bool(count >= MIN_BACKTEST and brier is not None and brier < baseline_brier)
     return {"mercado": market, "jogos_avaliados": count, "brier_modelo": brier,
             "brier_liga": baseline_brier, "aprovado": approved,
+            "melhoria_brier": baseline_brier - brier if brier is not None else None,
+            "estado": "validado" if approved else "experimental",
             "criterio": f"mínimo {MIN_BACKTEST} jogos e Brier do modelo menor que o da liga"}
 
 
@@ -180,6 +206,9 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
     summaries = []
     for event_id, prediction in predictions.items():
         meta, probabilities = event_meta[event_id], prediction["probabilidades"]
+        sample = prediction["amostra"]
+        effective_sample = min(sample["mandante_casa"], sample["visitante_fora"])
+        uncertainty = min(.18, 0.45 / math.sqrt(effective_sample))
         summaries.append({"evento_id": event_id, **meta,
             "vitoria_mandante": probabilities["mandante"],
             "empate": probabilities["empate"],
@@ -189,8 +218,12 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
             "ambas_marcam": probabilities["ambas_marcam"],
             "gols_esperados_mandante": prediction["gols_esperados"]["mandante"],
             "gols_esperados_visitante": prediction["gols_esperados"]["visitante"]})
+        summaries[-1].update(amostra_mandante=sample["mandante_casa"],
+            amostra_visitante=sample["visitante_fora"], ultima_partida=sample["ultima_partida"],
+            incerteza_aproximada=uncertainty,
+            confianca="moderada" if effective_sample >= 10 else "baixa")
     summaries.sort(key=lambda item: (item["inicio"], item["mandante"], item["visitante"]))
-    return {"modelo": "poisson_mando_regularizado_v1", "oportunidades": ranked,
+    return {"modelo": "poisson_mando_temporal_v2", "oportunidades": ranked,
             "candidatos_avaliados": len(candidates), "eventos_sem_modelo": rejected,
             "pre_selecao_eventos": shortlist, "resumo_jogos": summaries,
             "validacoes": validations,

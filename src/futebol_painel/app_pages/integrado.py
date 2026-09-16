@@ -23,7 +23,8 @@ from futebol_analytics.database.forecast import upcoming, forecast
 from futebol_analytics.database.league_rows import read_brasileirao_goals, read_brasileirao_schedule
 from futebol_analytics.daily import plan
 from futebol_analytics.api.the_odds import collect_event_odds, collect_odds
-from futebol_analytics.database.market_store import save_odds, storage_report, upcoming_odds
+from futebol_analytics.database.market_store import (evaluate_predictions, save_odds,
+    save_predictions, storage_report, upcoming_odds)
 
 
 COVERAGE_LABELS = {
@@ -424,8 +425,12 @@ with focus_tab:
                             raise ValueError('Histórico da Premier indisponível.')
                     else:
                         histories = read_brasileirao_goals(db, str(today.year))['partidas']
-                    st.session_state['ranking_oportunidades'] = rank_opportunities(
-                        histories, market_rows, today=today)
+                    db.initialize()
+                    performance = evaluate_predictions(db, odds_league, histories)
+                    result = rank_opportunities(histories, market_rows, today=today)
+                    result['previsoes_registradas'] = save_predictions(db, odds_league, result)
+                    result['desempenho_publicado'] = performance
+                    st.session_state['ranking_oportunidades'] = result
                     st.session_state['ranking_oportunidades_liga'] = odds_league
             except (ValueError, DatabaseError) as error:
                 st.warning(f'Não foi possível concluir o ranking: {error}')
@@ -433,7 +438,12 @@ with focus_tab:
                    if st.session_state.get('ranking_oportunidades_liga') == odds_league else None)
         if ranking:
             if ranking.get('resumo_jogos'):
+                approved_markets = sum(item['aprovado'] for item in ranking['validacoes'].values())
                 st.markdown('##### Probabilidades por jogo')
+                if approved_markets:
+                    st.success(f'{approved_markets} mercado(s) superaram a referência histórica nesta validação.')
+                else:
+                    st.warning('Modelo experimental: nenhum mercado superou a referência simples da liga. Use as probabilidades para acompanhamento, não como indicação.')
                 st.dataframe([{
                     'início': item['inicio'].astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m %H:%M'),
                     'jogo': f"{item['mandante']} × {item['visitante']}",
@@ -444,12 +454,25 @@ with focus_tab:
                     'mais de 2,5 gols': 100 * item['over_2.5'],
                     'ambos marcam': 100 * item['ambas_marcam'],
                     'gols esperados': f"{item['gols_esperados_mandante']:.2f} × {item['gols_esperados_visitante']:.2f}",
+                    'confiança': item['confianca'],
+                    'amostra casa/fora': f"{item['amostra_mandante']}/{item['amostra_visitante']}",
+                    'incerteza aprox.': 100 * item['incerteza_aproximada'],
                 } for item in ranking['resumo_jogos']], hide_index=True, width='stretch',
                     column_config={name: st.column_config.NumberColumn(format='%.1f%%')
                                    for name in ('vitória · mandante', 'empate',
                                                 'vitória · visitante', 'mais de 1,5 gols',
-                                                'mais de 2,5 gols', 'ambos marcam')})
-                st.caption('Probabilidades do modelo por confronto. As colunas de vitória somam 100% com o empate; os mercados de gols são avaliações separadas.')
+                                                'mais de 2,5 gols', 'ambos marcam',
+                                                'incerteza aprox.')})
+                st.caption(f"Probabilidades registradas antes dos jogos: {ranking.get('previsoes_registradas', 0)}. A incerteza é uma aproximação baseada na menor amostra casa/fora, não um intervalo calibrado.")
+                with st.expander('Como interpretar esta tabela'):
+                    st.write('Vitória do mandante, empate e vitória do visitante somam 100%. Mais de 1,5, mais de 2,5 e ambos marcam são mercados separados e não devem ser somados.')
+                    st.write('O modelo pondera partidas recentes com meia-vida de 180 dias e regulariza amostras pequenas pela média da liga.')
+                published = ranking.get('desempenho_publicado', {})
+                if published.get('desempenho'):
+                    with st.expander('Desempenho das previsões realmente registradas'):
+                        st.caption(f"Previsões avaliadas nesta execução: {published.get('avaliadas_agora', 0)}. Diferente do backtest, estas previsões foram armazenadas antes das partidas.")
+                        st.dataframe(published['desempenho'], hide_index=True, width='stretch',
+                            column_config={'brier': st.column_config.NumberColumn(format='%.4f')})
             validation_rows = [{
                 'mercado': {'over_1.5': 'Mais de 1,5 gols', 'over_2.5': 'Mais de 2,5 gols',
                             'ambas_marcam': 'Ambos marcam'}[key],
