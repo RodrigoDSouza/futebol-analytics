@@ -31,7 +31,8 @@ from futebol_analytics.analysis.backtest import backtest
 from futebol_analytics.analysis.historical_odds import compare_historical_odds
 from futebol_analytics.api.the_odds import collect_odds, SPORTS as ODDS_LEAGUES
 from futebol_analytics.database.market_store import (save_odds, cleanup, storage_report,
-    upcoming_odds, save_predictions, evaluate_predictions)
+    upcoming_odds, save_predictions, evaluate_predictions, save_model_decisions,
+    model_decision_performance)
 from futebol_analytics.analysis.opportunities import rank_opportunities
 
 
@@ -160,7 +161,9 @@ def main(argv: list[str] | None = None) -> int:
                 report = rank_opportunities(history, quotes, today=today, fixtures=fixtures)
                 result = {"liga": args.liga, "jogos_calculados": len(report["resumo_jogos"]),
                           "previsoes_registradas": save_predictions(store, args.liga, report),
-                          "avaliadas_agora": evaluation["avaliadas_agora"]}
+                          "decisoes_registradas": save_model_decisions(store, args.liga, report),
+                          "avaliadas_agora": evaluation["avaliadas_agora"],
+                          "estrategia": model_decision_performance(store, args.liga)}
             elif args.command == "banco-limpar":
                 result = cleanup(store)
             else:

@@ -15,7 +15,7 @@ MIN_LEAGUE = 30
 MIN_VENUE = 5
 PRIOR_MATCHES = 5
 HALF_LIFE_DAYS = 180
-MIN_BACKTEST = 30
+MIN_BACKTEST = 100
 MIN_EDGE = 0.03
 MIN_EV = 0.03
 
@@ -96,19 +96,38 @@ def predict_match(rows: list[dict[str, Any]], home: str, away: str,
     away_allowed = shrunk(away_rows, "gols_mandante", league_home)
     lambda_home = league_home * (home_scored / league_home) * (away_allowed / league_home)
     lambda_away = league_away * (away_scored / league_away) * (home_allowed / league_away)
-    result = markets(lambda_home, lambda_away)
+    rho = _estimate_rho(valid, league_home, league_away)
+    result = markets(lambda_home, lambda_away, rho=rho)
     return {
-        "modelo": "poisson_mando_temporal_v2",
+        "modelo": "poisson_mando_temporal_dc_v3",
         "equipes_historico": {"mandante": local_home, "visitante": local_away},
         "amostra": {"liga": len(valid), "mandante_casa": len(home_rows),
                     "visitante_fora": len(away_rows), "peso_prior": PRIOR_MATCHES,
                     "meia_vida_dias": HALF_LIFE_DAYS,
                     "ultima_partida": max(str(row["data"]) for row in valid)},
         "gols_esperados": {"mandante": lambda_home, "visitante": lambda_away},
+        "rho_dixon_coles": rho,
         "media_gols_recente": {"mandante_em_casa": recent_total(home_rows),
                                "visitante_fora": recent_total(away_rows)},
         **result,
     }
+
+
+def _estimate_rho(rows: list[dict[str, Any]], home_mean: float, away_mean: float) -> float:
+    """Ajusta a dependência de placares 0/1 com regularização conservadora."""
+    best_rho, best_score = 0.0, -math.inf
+    for step in range(-20, 21):
+        rho = step / 100
+        factors = {(0, 0): 1-home_mean*away_mean*rho,
+                   (0, 1): 1+home_mean*rho,
+                   (1, 0): 1+away_mean*rho, (1, 1): 1-rho}
+        if min(factors.values()) <= 0:
+            continue
+        score = sum(math.log(factors.get((row["gols_mandante"], row["gols_visitante"]), 1.0))
+                    for row in rows) - 20 * rho * rho
+        if score > best_score:
+            best_rho, best_score = rho, score
+    return best_rho
 
 
 def validate(rows: list[dict[str, Any]], market: str) -> dict[str, Any]:
@@ -141,12 +160,32 @@ def validate(rows: list[dict[str, Any]], market: str) -> dict[str, Any]:
              if count else None)
     baseline_brier = (sum((base - result) ** 2 for _, base, result in predictions) / count
                       if count else None)
-    approved = bool(count >= MIN_BACKTEST and brier is not None and brier < baseline_brier)
+    log_loss = (sum(-(result * math.log(max(p, 1e-12))
+                      + (1-result) * math.log(max(1-p, 1e-12)))
+                    for p, _, result in predictions) / count if count else None)
+    baseline_log_loss = (sum(-(result * math.log(max(base, 1e-12))
+                               + (1-result) * math.log(max(1-base, 1e-12)))
+                             for _, base, result in predictions) / count if count else None)
+    halves = [predictions[:count//2], predictions[count//2:]] if count >= 2 else [[], []]
+    segment_improvements = []
+    for segment in halves:
+        if segment:
+            segment_improvements.append(
+                sum((base-result)**2 - (p-result)**2 for p, base, result in segment) / len(segment))
+    stable = len(segment_improvements) == 2 and all(value > 0 for value in segment_improvements)
+    approved = bool(count >= MIN_BACKTEST and brier is not None and brier < baseline_brier
+                    and log_loss < baseline_log_loss and stable)
+    state = ("sem_amostra" if count < MIN_BACKTEST else "validado" if approved
+             else "promissor" if brier is not None and brier < baseline_brier
+             else "experimental")
     return {"mercado": market, "jogos_avaliados": count, "brier_modelo": brier,
             "brier_liga": baseline_brier, "aprovado": approved,
+            "log_loss_modelo": log_loss, "log_loss_liga": baseline_log_loss,
+            "estavel_nos_dois_periodos": stable,
             "melhoria_brier": baseline_brier - brier if brier is not None else None,
-            "estado": "validado" if approved else "experimental",
-            "criterio": f"mínimo {MIN_BACKTEST} jogos e Brier do modelo menor que o da liga"}
+            "estado": state,
+            "criterio": (f"mínimo {MIN_BACKTEST} jogos, Brier e Log Loss melhores que a liga "
+                         "e melhora nas duas metades cronológicas")}
 
 
 def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
@@ -217,6 +256,13 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
         edge = probability - fair if fair is not None else None
         expected_value = probability * price - 1 if price is not None else None
         validation = validations[model_market]
+        barriers = []
+        if not validation["aprovado"]: barriers.append(f"mercado {validation['estado']}")
+        if quote.get("casas", 0) < 3: barriers.append("menos de três casas")
+        if edge is None: barriers.append("probabilidade justa indisponível")
+        elif edge < MIN_EDGE: barriers.append("vantagem inferior a 3%")
+        if expected_value is None: barriers.append("odd de referência indisponível")
+        elif expected_value < MIN_EV: barriers.append("valor esperado inferior a 3%")
         eligible = bool(validation["aprovado"] and quote.get("casas", 0) >= 3
                         and edge is not None and expected_value is not None
                         and edge >= MIN_EDGE and expected_value >= MIN_EV)
@@ -227,6 +273,7 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
             "vantagem": edge, "odd_referencia": price, "valor_esperado": expected_value,
             "casas": quote.get("casas", 0), "validacao": validation,
             "gols_esperados": predictions[event_id]["gols_esperados"], "elegivel": eligible,
+            "barreiras": barriers,
         })
     ranked = sorted((row for row in candidates if row["elegivel"]),
                     key=lambda row: (-row["valor_esperado"], -row["vantagem"], row["inicio"]))
@@ -272,6 +319,14 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
         item["estado_decisao"] = ("acompanhar" if item["evento_id"] in eligible_events
                                   else "sem valor validado" if item["evento_id"] in quoted_events
                                   else "sem preço de mercado")
+        event_candidates = [candidate for candidate in candidates
+                            if candidate["evento_id"] == item["evento_id"]]
+        item["motivos_decisao"] = (sorted({reason for candidate in event_candidates
+                                            for reason in candidate["barreiras"]})
+                                    if event_candidates else
+                                    (["odds dos mercados do modelo indisponíveis"]
+                                     if item["evento_id"] in quoted_events else
+                                     ["nenhuma odd associada ao jogo"]))
         for quote in (row for row in odds if str(row["evento_id"]) == item["evento_id"]):
             selection, field = str(quote["selecao"]).casefold(), None
             if quote["mercado"] == "h2h":
@@ -286,11 +341,12 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
                         "over_2.5" if float(quote["linha"] or 0) == 2.5 else None)
             elif quote["mercado"] == "btts" and selection in ("yes", "sim"):
                 field = "ambas_marcam"
-            price = quote.get("odd_melhor") or quote.get("odd_mediana")
+            # CLV compara consenso com consenso; a melhor casa enviesaria o indicador.
+            price = quote.get("odd_mediana") or quote.get("odd_melhor")
             if field and price:
                 item["precos_entrada"][field] = {"odd": float(price),
                     "observado_em": quote.get("observado_em"), "checkpoint": quote.get("checkpoint")}
-    return {"modelo": "poisson_mando_temporal_v2", "oportunidades": ranked,
+    return {"modelo": "poisson_mando_temporal_dc_v3", "oportunidades": ranked,
             "candidatos_avaliados": len(candidates), "eventos_sem_modelo": rejected,
             "pre_selecao_eventos": shortlist, "resumo_jogos": summaries,
             "validacoes": validations,

@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from psycopg.types.json import Jsonb
 
 from futebol_analytics.database.store import SnapshotStore
-from futebol_analytics.analysis.opportunities import canonical_team
+from futebol_analytics.analysis.opportunities import canonical_team, risk_plan
 from futebol_analytics.analysis.calibration import (calibration_report, grouped_calibration,
     closing_value_report)
 
@@ -309,6 +309,85 @@ def evaluate_predictions(store: SnapshotStore, league: str, history: list[dict[s
         {**row, "linha": float(row["linha"]),
          "brier": float(row["brier"]) if row["brier"] is not None else None}
         for row in performance]}
+
+
+def save_model_decisions(store: SnapshotStore, league: str, report: dict[str, Any], *,
+                         created_at: datetime | None = None) -> int:
+    """Registra somente seleções que passaram por todas as travas vigentes."""
+    created_at = _time(created_at or datetime.now(timezone.utc))
+    opportunities = report.get("oportunidades") or []
+    if not opportunities:
+        return 0
+    plan = risk_plan(opportunities, bankroll=1.0)
+    rows = []
+    for item in plan["selecoes"]:
+        market, selection, line = _decision_market(item["mercado"])
+        rows.append({"id": str(uuid4()), "provedor": "the-odds-api", "liga": league,
+            "evento_id": str(item["evento_id"]), "criado_em": created_at,
+            "modelo": report["modelo"], "mercado": market, "selecao": selection,
+            "linha": line, "probabilidade": item["probabilidade_modelo"],
+            "odd": item["odd_referencia"], "vantagem": item["vantagem"],
+            "valor_esperado": item["valor_esperado"], "fracao_banca": item["fracao_banca"]})
+    with store._connection() as connection:
+        connection.execute("""
+            INSERT INTO futebol_decisoes_modelo
+                (id, provedor, liga, evento_id, criado_em, modelo, mercado, selecao,
+                 linha, probabilidade, odd, vantagem, valor_esperado, fracao_banca)
+            SELECT id::uuid, provedor, liga, evento_id, criado_em, modelo, mercado, selecao,
+                   linha, probabilidade, odd, vantagem, valor_esperado, fracao_banca
+            FROM jsonb_to_recordset(%s::jsonb) AS row(
+                id text, provedor text, liga text, evento_id text, criado_em timestamptz,
+                modelo text, mercado text, selecao text, linha numeric, probabilidade numeric,
+                odd numeric, vantagem numeric, valor_esperado numeric, fracao_banca numeric)
+            ON CONFLICT DO NOTHING
+        """, (Jsonb(_json_rows(rows)),))
+    return len(rows)
+
+
+def model_decision_performance(store: SnapshotStore, league: str, *,
+                               now: datetime | None = None) -> dict[str, Any]:
+    """Liquida o diário via previsões avaliadas e calcula yield e drawdown."""
+    now = _time(now or datetime.now(timezone.utc))
+    with store._connection() as connection:
+        connection.execute("""
+            UPDATE futebol_decisoes_modelo d SET
+                resultado=CASE WHEN d.selecao IN ('under', 'nao')
+                    THEN 1-p.resultado ELSE p.resultado END, avaliado_em=%s,
+                retorno_fracionario=d.fracao_banca *
+                    CASE WHEN (CASE WHEN d.selecao IN ('under', 'nao')
+                        THEN 1-p.resultado ELSE p.resultado END)=1 THEN d.odd-1 ELSE -1 END
+            FROM futebol_previsoes p
+            WHERE (p.provedor, p.liga, p.evento_id, p.modelo, p.mercado, p.linha) =
+                  (d.provedor, d.liga, d.evento_id, d.modelo, d.mercado, d.linha)
+              AND (p.selecao=d.selecao OR (p.selecao='over' AND d.selecao='under')
+                   OR (p.selecao='sim' AND d.selecao='nao'))
+              AND d.liga=%s AND d.resultado IS NULL AND p.resultado IS NOT NULL
+        """, (now, league))
+        rows = connection.execute("""
+            SELECT criado_em, mercado, selecao, linha, odd, fracao_banca,
+                   resultado, retorno_fracionario
+            FROM futebol_decisoes_modelo WHERE liga=%s ORDER BY criado_em, id
+        """, (league,)).fetchall()
+    settled = [row for row in rows if row["resultado"] is not None]
+    profit, stake, cumulative, peak, drawdown = 0.0, 0.0, 0.0, 0.0, 0.0
+    for row in settled:
+        value, fraction = float(row["retorno_fracionario"]), float(row["fracao_banca"])
+        profit += value; stake += fraction; cumulative += value; peak = max(peak, cumulative)
+        drawdown = max(drawdown, peak - cumulative)
+    return {"decisoes": len(rows), "liquidadas": len(settled), "lucro_fracionario": profit,
+            "yield": profit / stake if stake else None, "drawdown_maximo": drawdown}
+
+
+def _decision_market(label: str) -> tuple[str, str, float]:
+    mappings = {"Mais de 1,5 gols": ("totals", "over", 1.5),
+                "Menos de 1,5 gols": ("totals", "under", 1.5),
+                "Mais de 2,5 gols": ("totals", "over", 2.5),
+                "Menos de 2,5 gols": ("totals", "under", 2.5),
+                "Ambos marcam · Sim": ("btts", "sim", 0.0),
+                "Ambos marcam · Não": ("btts", "nao", 0.0)}
+    if label not in mappings:
+        raise ValueError("Mercado elegível sem mapeamento para o diário.")
+    return mappings[label]
 
 
 def _details(event: dict[str, Any], provider: str, league: str,

@@ -18,6 +18,18 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install .
+      - name: Atualizar agenda e resultados do Brasileirão
+        continue-on-error: true
+        env:
+          FUTEBOL_DATABASE_URL: ${{ secrets.FUTEBOL_DATABASE_URL }}
+          DADOS_FUTEBOL_API_KEY: ${{ secrets.DADOS_FUTEBOL_API_KEY }}
+        run: |
+          if [ -n "$FUTEBOL_DATABASE_URL" ] && [ -n "$DADOS_FUTEBOL_API_KEY" ]; then
+            futebol-analytics sincronizar rodadas 3
+            futebol-analytics normalizar-local
+          else
+            echo "Atualização de resultados ignorada: configure DADOS_FUTEBOL_API_KEY."
+          fi
       - name: Coletar Premier League e Brasileirão
         env:
           FUTEBOL_DATABASE_URL: ${{ secrets.FUTEBOL_DATABASE_URL }}

@@ -23,7 +23,8 @@ from futebol_analytics.database.league_rows import read_brasileirao_goals, read_
 from futebol_analytics.daily import plan
 from futebol_analytics.api.the_odds import collect_event_odds, collect_odds
 from futebol_analytics.database.market_store import (evaluate_predictions, save_odds,
-    save_predictions, storage_report, upcoming_odds)
+    model_decision_performance, save_model_decisions, save_predictions,
+    storage_report, upcoming_odds)
 
 
 COVERAGE_LABELS = {
@@ -37,9 +38,9 @@ COVERAGE_LABELS = {
 }
 
 st.caption('Acompanhe Premier League e Brasileirão, consulte a agenda e avalie modelos com dados locais.')
-decision_tab, focus_tab, agenda_tab, csv_tab, poisson_tab, database_tab = st.tabs([
-    'Decisão', 'Dados e validação', 'Agenda e planejamento',
-    'Histórico europeu e validação', 'Poisson brasileiro', 'Uso do banco'])
+decision_tab, focus_tab, data_tab, database_tab = st.tabs([
+    'Hoje', 'Desempenho', 'Dados e modelos', 'Sistema'])
+agenda_tab = csv_tab = poisson_tab = data_tab
 
 
 def store():
@@ -77,6 +78,8 @@ def calculate_decision(db, league, today, market_rows):
     performance = evaluate_predictions(db, league, histories)
     result = rank_opportunities(histories, market_rows, today=today, fixtures=fixtures)
     result['previsoes_registradas'] = save_predictions(db, league, result)
+    result['decisoes_registradas'] = save_model_decisions(db, league, result)
+    result['desempenho_estrategia'] = model_decision_performance(db, league)
     result['desempenho_publicado'] = performance
     result['jogos_agenda'] = len(fixtures)
     result['jogos_com_odds'] = len({row['evento_id'] for row in market_rows})
@@ -105,6 +108,7 @@ def latest_local_report(prefix, required):
 
 
 with agenda_tab:
+    st.subheader('Agenda e planejamento')
     today = datetime.now(ZoneInfo('America/Sao_Paulo')).date()
     st.write(f'Dia em São Paulo: {today:%d/%m/%Y}')
     if st.button('Atualizar agenda e planejar (2 consultas Football-data)'):
@@ -151,6 +155,8 @@ with agenda_tab:
         st.warning('Fila estatística não é indicação. A leitura automática dos mercados da Betano ainda não foi validada.')
         download(report, 'Baixar planejamento', 'planejamento')
 with csv_tab:
+    st.divider()
+    st.subheader('Histórico europeu e validação')
     league = st.selectbox('Liga', list(LEAGUES), format_func=lambda k: LEAGUES[k])
     season = st.selectbox('Temporada', ['2026/2027','2025/2026'])
     try:
@@ -199,6 +205,8 @@ with csv_tab:
         st.error('Não foi possível consultar o PostgreSQL hospedado para carregar este histórico.')
 
 with poisson_tab:
+    st.divider()
+    st.subheader('Poisson brasileiro')
     cid = st.number_input('ID do campeonato na API Dados Futebol', min_value=1, value=3)
     year = st.text_input('Temporada brasileira', value='2026')
     try:
@@ -462,14 +470,13 @@ with decision_tab:
                     'gols esperados': f"{item['gols_esperados_mandante']:.2f} × {item['gols_esperados_visitante']:.2f}",
                     'confiança': item['confianca'],
                     'amostra casa/fora': f"{item['amostra_mandante']}/{item['amostra_visitante']}",
-                    'incerteza aprox.': 100 * item['incerteza_aproximada'],
                 } for item in ranking['resumo_jogos']], hide_index=True, width='stretch',
                     column_config={name: st.column_config.NumberColumn(format='%.1f%%')
                                    for name in ('vitória · mandante', 'empate',
                                                 'vitória · visitante', 'mais de 1,5 gols',
                                                 'mais de 2,5 gols', 'ambos marcam',
-                                                'incerteza aprox.')})
-                st.caption(f"Probabilidades registradas antes dos jogos: {ranking.get('previsoes_registradas', 0)}. A incerteza é uma aproximação baseada na menor amostra casa/fora, não um intervalo calibrado.")
+                                                )})
+                st.caption(f"Probabilidades registradas antes dos jogos: {ranking.get('previsoes_registradas', 0)}. Qualidade descreve cobertura e tamanho da amostra; não representa certeza do resultado.")
                 selected_game = st.selectbox('Detalhar partida', ranking['resumo_jogos'],
                     format_func=lambda item: f"{item['mandante']} × {item['visitante']} · {item['estado_decisao']}",
                     key=f'detalhe_partida_{odds_league}')
@@ -481,6 +488,7 @@ with decision_tab:
                         f"{selected_game['amostra_mandante']}/{selected_game['amostra_visitante']}")
                     detail_metrics[2].metric('Qualidade', selected_game['qualidade_dados'])
                     detail_metrics[3].metric('Situação', selected_game['estado_decisao'])
+                    st.write('**Motivos da decisão:** ' + '; '.join(selected_game['motivos_decisao']))
                     st.dataframe([{'mercado': 'Vitória do mandante', 'probabilidade': 100 * selected_game['vitoria_mandante']},
                                   {'mercado': 'Empate', 'probabilidade': 100 * selected_game['empate']},
                                   {'mercado': 'Vitória do visitante', 'probabilidade': 100 * selected_game['vitoria_visitante']},
@@ -527,16 +535,30 @@ with decision_tab:
                             st.caption('CLV = odd observada na previsão ÷ odd mediana de fechamento − 1. Valor positivo indica que o preço observado foi melhor que o fechamento; isso não mede lucro realizado.')
                         else:
                             st.caption('CLV ainda sem amostra: ele aparecerá quando previsões com odd registrada também tiverem consenso de fechamento.')
+                strategy = ranking.get('desempenho_estrategia') or {}
+                with st.expander('Diário automático da estratégia'):
+                    strategy_cols = st.columns(4)
+                    strategy_cols[0].metric('Decisões', strategy.get('decisoes', 0))
+                    strategy_cols[1].metric('Liquidadas', strategy.get('liquidadas', 0))
+                    strategy_cols[2].metric('Yield', f"{strategy['yield']:.1%}" if strategy.get('yield') is not None else '—')
+                    strategy_cols[3].metric('Drawdown máximo', f"{strategy.get('drawdown_maximo', 0):.2%}")
+                    st.caption('Registra automaticamente apenas seleções que passaram por todas as travas. Os valores usam frações teóricas da banca e não representam apostas pessoais.')
             validation_rows = [{
                 'mercado': {'over_1.5': 'Mais de 1,5 gols', 'over_2.5': 'Mais de 2,5 gols',
                             'ambas_marcam': 'Ambos marcam'}[key],
                 'jogos avaliados': item['jogos_avaliados'],
                 'Brier · modelo': item['brier_modelo'], 'Brier · liga': item['brier_liga'],
+                'Log Loss · modelo': item['log_loss_modelo'],
+                'Log Loss · liga': item['log_loss_liga'],
+                'estável nos períodos': item['estavel_nos_dois_periodos'],
+                'estado': item['estado'],
                 'aprovado': item['aprovado']}
                 for key, item in ranking['validacoes'].items()]
             st.dataframe(validation_rows, hide_index=True, width='stretch',
                 column_config={'Brier · modelo': st.column_config.NumberColumn(format='%.4f'),
-                               'Brier · liga': st.column_config.NumberColumn(format='%.4f')})
+                               'Brier · liga': st.column_config.NumberColumn(format='%.4f'),
+                               'Log Loss · modelo': st.column_config.NumberColumn(format='%.4f'),
+                               'Log Loss · liga': st.column_config.NumberColumn(format='%.4f')})
             if ranking['oportunidades']:
                 st.dataframe([{
                     'início': item['inicio'].astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m %H:%M'),

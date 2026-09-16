@@ -29,6 +29,8 @@ def test_prediction_resolves_provider_suffix_and_returns_markets():
     assert result["media_gols_recente"]["mandante_em_casa"] > 0
     assert resolve_team("Wolves", {"Wolverhampton Wanderers FC", "Fulham"}) == "Wolverhampton Wanderers FC"
     assert result["amostra"]["meia_vida_dias"] == 180
+    assert result["modelo"] == "poisson_mando_temporal_dc_v3"
+    assert -.2 <= result["rho_dixon_coles"] <= .2
 
 
 def test_ranking_abstains_when_validation_does_not_pass():
@@ -47,6 +49,9 @@ def test_ranking_abstains_when_validation_does_not_pass():
     assert summary["cobertura_mercado"] == "disponível"
     assert summary["estado_decisao"] in {"acompanhar", "sem valor validado"}
     assert set(report["validacoes"]) == {"over_1.5", "over_2.5", "ambas_marcam"}
+    assert all(item["jogos_avaliados"] < 100 or "log_loss_modelo" in item
+               for item in report["validacoes"].values())
+    assert summary["motivos_decisao"]
 
 
 def test_fixtures_receive_model_even_without_any_odds():
@@ -58,6 +63,7 @@ def test_fixtures_receive_model_even_without_any_odds():
     assert report["resumo_jogos"][0]["origem_agenda"] == "dados-futebol"
     assert report["resumo_jogos"][0]["possui_evento_odds"] is False
     assert report["resumo_jogos"][0]["estado_decisao"] == "sem preço de mercado"
+    assert report["resumo_jogos"][0]["motivos_decisao"] == ["nenhuma odd associada ao jogo"]
     assert report["candidatos_avaliados"] == 0
 
 
@@ -73,7 +79,7 @@ def test_fixture_is_reconciled_with_matching_odds_event():
     assert len(report["resumo_jogos"]) == 1
     assert report["resumo_jogos"][0]["evento_id"] == "odds-1"
     assert report["resumo_jogos"][0]["possui_evento_odds"] is True
-    assert report["resumo_jogos"][0]["precos_entrada"]["over_2.5"]["odd"] == 2.0
+    assert report["resumo_jogos"][0]["precos_entrada"]["over_2.5"]["odd"] == 1.9
 
 
 def test_risk_plan_caps_daily_exposure_and_correlated_markets():

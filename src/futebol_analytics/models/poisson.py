@@ -24,9 +24,20 @@ def poisson_distribution(mean: float) -> list[float]:
     raise ValueError("Não foi possível limitar o erro numérico da distribuição.")
 
 
-def markets(home_mean: float, away_mean: float) -> dict[str, Any]:
+def markets(home_mean: float, away_mean: float, *, rho: float = 0.0) -> dict[str, Any]:
+    if not math.isfinite(rho) or not -.25 <= rho <= .25:
+        raise ValueError("Correção Dixon-Coles fora do intervalo suportado.")
     home, away = poisson_distribution(home_mean), poisson_distribution(away_mean)
-    cells = [(h, a, ph * pa) for h, ph in enumerate(home) for a, pa in enumerate(away)]
+    def correction(h: int, a: int) -> float:
+        if (h, a) == (0, 0): return 1 - home_mean * away_mean * rho
+        if (h, a) == (0, 1): return 1 + home_mean * rho
+        if (h, a) == (1, 0): return 1 + away_mean * rho
+        if (h, a) == (1, 1): return 1 - rho
+        return 1.0
+    cells = [(h, a, ph * pa * correction(h, a))
+             for h, ph in enumerate(home) for a, pa in enumerate(away)]
+    if any(probability < 0 for _, _, probability in cells):
+        raise ValueError("Correção Dixon-Coles gerou probabilidade inválida.")
     mass = math.fsum(p for _, _, p in cells)
 
     def probability(predicate) -> float:
@@ -43,7 +54,8 @@ def markets(home_mean: float, away_mean: float) -> dict[str, Any]:
         "placares_mais_provaveis": [dict(mandante=h, visitante=a, probabilidade=p / mass)
                                     for h, a, p in sorted(cells, key=lambda cell: (-cell[2], cell[0], cell[1]))[:5]],
         "precisao_numerica": {"massa_omitida_antes_normalizacao": max(0.0, 1 - mass),
-                              "max_gols_mandante": len(home) - 1, "max_gols_visitante": len(away) - 1},
+                              "max_gols_mandante": len(home) - 1, "max_gols_visitante": len(away) - 1,
+                              "rho_dixon_coles": rho},
     }
 
 

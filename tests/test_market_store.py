@@ -3,7 +3,8 @@ from decimal import Decimal
 
 import pytest
 
-from futebol_analytics.database.market_store import save_predictions, upcoming_odds
+from futebol_analytics.database.market_store import (save_model_decisions, save_predictions,
+    upcoming_odds)
 
 
 class Result:
@@ -83,3 +84,23 @@ def test_save_predictions_skips_games_without_odds_event():
         "possui_evento_odds": False, "vitoria_mandante": .5}]}
     assert save_predictions(ForbiddenStore(), "brasileirao", report,
         calculated_at=datetime(2026, 9, 16, tzinfo=timezone.utc)) == 0
+
+
+def test_model_journal_records_only_eligible_strategy_selection():
+    captured = {}
+    class JournalConnection:
+        def execute(self, statement, params):
+            captured["payload"] = params[0].obj
+    class JournalContext:
+        def __enter__(self): return JournalConnection()
+        def __exit__(self, *_): return False
+    class JournalStore:
+        def _connection(self): return JournalContext()
+    opportunity = {"evento_id": "e1", "jogo": "A × B", "mercado": "Mais de 2,5 gols",
+        "probabilidade_modelo": .60, "odd_referencia": 2.0, "vantagem": .08,
+        "valor_esperado": .20}
+    report = {"modelo": "poisson_mando_temporal_dc_v3", "oportunidades": [opportunity]}
+    assert save_model_decisions(JournalStore(), "brasileirao", report,
+        created_at=datetime(2026, 9, 16, tzinfo=timezone.utc)) == 1
+    assert captured["payload"][0]["mercado"] == "totals"
+    assert captured["payload"][0]["fracao_banca"] <= .01

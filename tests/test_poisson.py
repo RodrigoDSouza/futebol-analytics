@@ -81,6 +81,16 @@ def test_insufficient_sample_abstains():
         predict(target, rows[:10], now=now)
 
 
+def test_dixon_coles_preserves_probability_mass_and_changes_low_scores():
+    from futebol_analytics.models.poisson import markets
+    independent = markets(1.4, 1.0)
+    corrected = markets(1.4, 1.0, rho=-.08)
+    assert sum(corrected["probabilidades"][key] for key in
+               ("mandante", "empate", "visitante")) == pytest.approx(1)
+    assert corrected["probabilidades"]["empate"] != independent["probabilidades"]["empate"]
+    assert corrected["precisao_numerica"]["rho_dixon_coles"] == -.08
+
+
 @pytest.mark.parametrize("change", [{"status":"encerrado"}, {"data_hora":None},
     {"data_hora":datetime(2026, 1, 1, tzinfo=timezone.utc)}])
 def test_no_retrospective_predictions(change):

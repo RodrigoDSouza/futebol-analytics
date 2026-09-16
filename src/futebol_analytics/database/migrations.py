@@ -3,7 +3,7 @@
 import psycopg
 
 
-def migrate(connection: psycopg.Connection, *, target: int = 5) -> None:
+def migrate(connection: psycopg.Connection, *, target: int = 6) -> None:
     # Serializa inicializações concorrentes até o commit/rollback da transação.
     connection.execute("SELECT pg_advisory_xact_lock(7062026)")
     connection.execute("""
@@ -38,6 +38,30 @@ def migrate(connection: psycopg.Connection, *, target: int = 5) -> None:
         connection.execute("INSERT INTO futebol_migracoes (versao) VALUES (4)")
     if target >= 5 and not connection.execute("SELECT 1 FROM futebol_migracoes WHERE versao = 5").fetchone():
         _version_five(connection)
+    if target >= 6 and not connection.execute("SELECT 1 FROM futebol_migracoes WHERE versao = 6").fetchone():
+        _version_six(connection)
+
+
+def _version_six(connection: psycopg.Connection) -> None:
+    """Diário imutável das seleções liberadas pelas travas do modelo."""
+    connection.execute("""
+        CREATE TABLE futebol_decisoes_modelo (
+            id uuid PRIMARY KEY, provedor text NOT NULL, liga text NOT NULL,
+            evento_id text NOT NULL, criado_em timestamptz NOT NULL,
+            modelo text NOT NULL, mercado text NOT NULL, selecao text NOT NULL,
+            linha numeric NOT NULL DEFAULT 0, probabilidade numeric NOT NULL,
+            odd numeric NOT NULL CHECK (odd > 1), vantagem numeric NOT NULL,
+            valor_esperado numeric NOT NULL, fracao_banca numeric NOT NULL
+                CHECK (fracao_banca > 0 AND fracao_banca <= .02),
+            resultado smallint CHECK (resultado IN (0, 1)),
+            retorno_fracionario numeric, avaliado_em timestamptz,
+            FOREIGN KEY (provedor, liga, evento_id)
+                REFERENCES futebol_odds_eventos(provedor, liga, evento_id) ON DELETE CASCADE,
+            UNIQUE (provedor, liga, evento_id, modelo, mercado, selecao, linha)
+        )
+    """)
+    connection.execute("CREATE INDEX futebol_decisoes_desempenho ON futebol_decisoes_modelo(liga, avaliado_em, criado_em)")
+    connection.execute("INSERT INTO futebol_migracoes (versao) VALUES (6)")
 
 
 def _version_five(connection: psycopg.Connection) -> None:
