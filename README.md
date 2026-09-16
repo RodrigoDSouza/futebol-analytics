@@ -5,10 +5,11 @@ A Fase 1 implementa a integração com a API Dados Futebol. A primeira entrega d
 Fase 2 adiciona PostgreSQL para guardar capturas e consultá-las localmente.
 A Fase 3 calcula estatísticas descritivas dos jogos normalizados, com filtros
 e exclusões explícitos.
-A Fase 4 começou com `poisson_v1` e agora inclui avaliações retrospectivas
-experimentais e um painel Streamlit. O piloto de over 2,5 para Premier e
-Brasileirão está documentado em `WORKFLOW.md`. Ainda não há modelo calibrado
-para indicações de aposta, odds pré-jogo integradas ou IA interpretativa.
+A Fase 4 começou com `poisson_v1` e agora inclui odds pré-jogo, previsões por
+confronto com peso temporal, validação cronológica, registro das previsões e um
+painel Streamlit. O ranking permanece bloqueado quando o modelo não supera a
+referência simples da liga. O controle de exposição usa limites conservadores e
+não transforma mercados experimentais em indicações.
 
 O caminho do produto será: dados → tratamento → estatística → modelos →
 probabilidades → backtesting → IA para interpretação. Números deverão vir de

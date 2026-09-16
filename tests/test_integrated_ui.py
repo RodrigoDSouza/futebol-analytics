@@ -15,7 +15,7 @@ def test_ui_survives_missing_database_without_api_requests(monkeypatch):
     monkeypatch.setattr('futebol_analytics.database.csv_store.read_csv', unavailable)
     monkeypatch.setattr('futebol_analytics.database.forecast.upcoming', unavailable)
     monkeypatch.setattr('futebol_analytics.api.current.collect', forbidden)
-    app = AppTest.from_file(str(Path('src/futebol_painel/web_app.py').resolve())).run(timeout=20)
+    app = AppTest.from_file(str(Path('src/futebol_analytics/web_app.py').resolve())).run(timeout=20)
     assert not app.exception
     assert app.title[0].value == 'Central integrada'
     assert len(app.info) >= 3
@@ -38,7 +38,7 @@ def test_focus_view_renders_both_markets_from_existing_report(monkeypatch):
               'taxas_ambos_marcam': {'premier_league': rate, 'brasileirao': rate},
               'qualidade_dados': {'premier_league': quality, 'brasileirao': quality},
               'agenda_7_dias': {'premier_league': [fixture], 'brasileirao': []}}
-    app = AppTest.from_file(str(Path('src/futebol_painel/web_app.py').resolve()))
+    app = AppTest.from_file(str(Path('src/futebol_analytics/web_app.py').resolve()))
     app.session_state['acompanhamento_foco'] = report
     app.run(timeout=20)
     assert not app.exception

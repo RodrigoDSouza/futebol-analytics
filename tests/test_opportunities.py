@@ -2,7 +2,8 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from futebol_analytics.analysis.opportunities import predict_match, rank_opportunities, resolve_team
+from futebol_analytics.analysis.opportunities import (predict_match, rank_opportunities,
+    resolve_team, risk_plan)
 
 
 def history():
@@ -43,3 +44,16 @@ def test_ranking_abstains_when_validation_does_not_pass():
     assert 0 <= summary["over_1.5"] <= 1
     assert summary["confianca"] in {"baixa", "moderada"}
     assert set(report["validacoes"]) == {"over_1.5", "over_2.5", "ambas_marcam"}
+
+
+def test_risk_plan_caps_daily_exposure_and_correlated_markets():
+    base = {"probabilidade_modelo": .60, "odd_referencia": 2.0,
+            "valor_esperado": .20, "jogo": "A × B", "mercado": "+2,5"}
+    plan = risk_plan([base | {"evento_id": "e1"},
+                      base | {"evento_id": "e1", "valor_esperado": .10},
+                      base | {"evento_id": "e2", "jogo": "C × D"}], bankroll=1000,
+                     max_bet_fraction=.01, max_daily_fraction=.015)
+    assert len(plan["selecoes"]) == 2
+    assert plan["exposicao_total"] == pytest.approx(15)
+    assert plan["fracao_total"] == pytest.approx(.015)
+    assert all(item["valor_maximo"] <= 10 for item in plan["selecoes"])

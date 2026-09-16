@@ -230,3 +230,43 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
             "criterios": {"minimo_casas": 3, "vantagem_minima": MIN_EDGE,
                           "valor_esperado_minimo": MIN_EV, "mercado_deve_superar_liga": True},
             "aviso": "Ranking experimental; odds mudam e desempenho histórico não garante retorno futuro."}
+
+
+def risk_plan(opportunities: list[dict[str, Any]], *, bankroll: float,
+              max_bet_fraction: float = .01, max_daily_fraction: float = .03,
+              kelly_fraction: float = .25, max_selections: int = 3) -> dict[str, Any]:
+    """Dimensiona exposição com Kelly fracionado, limites e uma seleção por jogo."""
+    if not math.isfinite(bankroll) or bankroll <= 0:
+        raise ValueError("A banca deve ser positiva.")
+    if not 0 < max_bet_fraction <= .02 or not 0 < max_daily_fraction <= .05:
+        raise ValueError("Limites fora da política conservadora suportada.")
+    if not 0 < kelly_fraction <= .25 or not 1 <= max_selections <= 5:
+        raise ValueError("Configuração de risco inválida.")
+    # Evita acumular mercados correlacionados do mesmo jogo.
+    best_by_event: dict[str, dict[str, Any]] = {}
+    for item in opportunities:
+        current = best_by_event.get(item["evento_id"])
+        if current is None or item["valor_esperado"] > current["valor_esperado"]:
+            best_by_event[item["evento_id"]] = item
+    selected = sorted(best_by_event.values(), key=lambda item: -item["valor_esperado"])[:max_selections]
+    allocations = []
+    for item in selected:
+        price, probability = item["odd_referencia"], item["probabilidade_modelo"]
+        full_kelly = max(0.0, (probability * price - 1) / (price - 1))
+        fraction = min(max_bet_fraction, kelly_fraction * full_kelly)
+        allocations.append({**item, "kelly_cheio": full_kelly,
+                            "fracao_banca": fraction, "valor_maximo": bankroll * fraction})
+    total = sum(item["fracao_banca"] for item in allocations)
+    if total > max_daily_fraction:
+        scale = max_daily_fraction / total
+        for item in allocations:
+            item["fracao_banca"] *= scale
+            item["valor_maximo"] *= scale
+    return {"banca": bankroll, "selecoes": allocations,
+            "exposicao_total": sum(item["valor_maximo"] for item in allocations),
+            "fracao_total": sum(item["fracao_banca"] for item in allocations),
+            "regras": {"kelly_fracionado": kelly_fraction,
+                       "maximo_por_aposta": max_bet_fraction,
+                       "maximo_diario": max_daily_fraction,
+                       "uma_selecao_por_jogo": True,
+                       "maximo_selecoes": max_selections}}

@@ -6,7 +6,7 @@ import streamlit as st
 from pathlib import Path
 
 
-PAGES = Path(__file__).resolve().parents[1] / "futebol_painel" / "app_pages"
+PAGES = Path(__file__).resolve().parent / "app_pages"
 
 
 st.set_page_config(
