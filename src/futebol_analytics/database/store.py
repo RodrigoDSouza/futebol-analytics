@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterator
 from uuid import UUID, uuid4
+from urllib.parse import urlsplit
 
 import psycopg
 from psycopg.rows import dict_row
@@ -11,6 +12,7 @@ from psycopg.types.json import Jsonb
 
 from futebol_analytics.config.settings import DatabaseSettings
 from futebol_analytics.database.migrations import migrate
+from futebol_analytics.database.neon_http import NeonHttpConnection, NeonHttpError
 
 RESOURCES = ("campeonatos", "partidas", "tabela", "estatisticas", "rodadas", "artilharia")
 
@@ -26,10 +28,14 @@ class SnapshotStore:
     @contextmanager
     def _connection(self) -> Iterator[psycopg.Connection]:
         try:
+            if (urlsplit(self._settings.url).hostname or "").endswith(".neon.tech"):
+                with NeonHttpConnection(self._settings.url) as connection:
+                    yield connection
+                return
             with psycopg.connect(self._settings.url, connect_timeout=5,
                                  options="-c statement_timeout=30000", row_factory=dict_row) as connection:
                 yield connection
-        except psycopg.Error:
+        except (psycopg.Error, NeonHttpError):
             raise DatabaseError(
                 "Falha no PostgreSQL. Verifique o serviço, a configuração e se banco-iniciar foi executado."
             ) from None
