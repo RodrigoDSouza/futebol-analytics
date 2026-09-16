@@ -22,7 +22,7 @@ from futebol_analytics.database.forecast import upcoming, forecast
 from futebol_analytics.database.league_rows import read_brasileirao_goals, read_brasileirao_schedule
 from futebol_analytics.daily import plan
 from futebol_analytics.api.the_odds import collect_odds
-from futebol_analytics.database.market_store import save_odds, storage_report
+from futebol_analytics.database.market_store import save_odds, storage_report, upcoming_odds
 
 
 COVERAGE_LABELS = {
@@ -350,10 +350,62 @@ with focus_tab:
 with focus_tab:
     st.divider()
     st.subheader('Odds pré-jogo')
-    st.caption('Coleta explícita da The Odds API. Cada clique consome créditos do plano do provedor.')
+    st.caption('Consensos armazenados da The Odds API. Carregar a tabela não consome créditos do provedor.')
     odds_league = st.selectbox('Liga para coletar odds', ['premier_league', 'brasileirao'],
                                format_func=lambda value: {'premier_league': 'Premier League',
                                                           'brasileirao': 'Brasileirão'}[value])
+    if st.button('Carregar próximos jogos e odds'):
+        try:
+            st.session_state['odds_proximos'] = upcoming_odds(store(), odds_league)
+            st.session_state['odds_proximos_liga'] = odds_league
+        except (ValueError, DatabaseError):
+            st.error('Não foi possível ler os consensos de odds no PostgreSQL.')
+    market_rows = (st.session_state.get('odds_proximos')
+                   if st.session_state.get('odds_proximos_liga') == odds_league else None)
+    if market_rows is not None:
+        tracking = st.session_state.get('acompanhamento_foco')
+        over_rate = None
+        if tracking:
+            over_rate = (tracking.get('taxas', {}).get(odds_league, {})
+                         .get('taxa_suavizada'))
+        display_rows = []
+        market_names = {'h2h': 'Resultado', 'totals': 'Total de gols'}
+        selection_names = {'Over': 'Mais', 'Under': 'Menos', 'Draw': 'Empate'}
+        for row in market_rows:
+            benchmark = None
+            if row['mercado'] == 'totals' and row['linha'] == 2.5 and over_rate is not None:
+                benchmark = over_rate if row['selecao'] == 'Over' else 1 - over_rate
+            display_rows.append({
+                'início (São Paulo)': row['inicio'].astimezone(
+                    ZoneInfo('America/Sao_Paulo')).strftime('%d/%m %H:%M'),
+                'jogo': f"{row['mandante']} × {row['visitante']}",
+                'mercado': market_names.get(row['mercado'], row['mercado']),
+                'seleção': selection_names.get(row['selecao'], row['selecao']),
+                'linha': row['linha'] or None,
+                'checkpoint atual': row['checkpoint'],
+                'odd de abertura': row['odd_abertura'],
+                'odd atual · mediana': row['odd_mediana'],
+                'melhor odd observada': row['odd_melhor'],
+                'probabilidade justa · mercado': 100 * row['probabilidade_justa'],
+                'benchmark histórico · liga': 100 * benchmark if benchmark is not None else None,
+                'diferença · p.p.': (100 * (benchmark - row['probabilidade_justa'])
+                                     if benchmark is not None else None),
+                'casas': row['casas'],
+            })
+        if display_rows:
+            st.dataframe(display_rows, hide_index=True, width='stretch',
+                column_config={
+                    'odd de abertura': st.column_config.NumberColumn(format='%.2f'),
+                    'odd atual · mediana': st.column_config.NumberColumn(format='%.2f'),
+                    'melhor odd observada': st.column_config.NumberColumn(format='%.2f'),
+                    'probabilidade justa · mercado': st.column_config.NumberColumn(format='%.1f%%'),
+                    'benchmark histórico · liga': st.column_config.NumberColumn(format='%.1f%%'),
+                    'diferença · p.p.': st.column_config.NumberColumn(format='%+.1f'),
+                })
+            st.caption('A probabilidade de mercado remove a margem do conjunto de cotações. O benchmark da liga é uma frequência histórica igual para todos os confrontos e ainda não comprova vantagem.')
+        else:
+            st.info('Nenhum evento futuro com consenso armazenado foi encontrado para esta liga.')
+    st.caption('A coleta manual abaixo consome créditos. A leitura da tabela acima usa somente o Neon.')
     if st.button('Coletar e armazenar odds'):
         try:
             with st.spinner('Consultando e normalizando as cotações...'):

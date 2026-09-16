@@ -126,6 +126,43 @@ def storage_report(store: SnapshotStore, *, limit_bytes: int = 500_000_000) -> d
             "atencao" if total >= .75*limit_bytes else "observacao" if total >= .6*limit_bytes else "normal"}
 
 
+def upcoming_odds(store: SnapshotStore, league: str, *, now: datetime | None = None,
+                  days: int = 14) -> list[dict[str, Any]]:
+    """Retorna abertura e último consenso dos eventos futuros, sem consumir API."""
+    if league not in ("premier_league", "brasileirao") or not 1 <= days <= 30:
+        raise ValueError("Liga ou janela de próximos jogos inválida.")
+    now = _time(now or datetime.now(timezone.utc))
+    with store._connection() as connection:
+        rows = connection.execute("""
+            WITH recentes AS (
+                SELECT DISTINCT ON
+                    (provedor, liga, evento_id, mercado, selecao, linha)
+                    provedor, liga, evento_id, checkpoint, mercado, selecao, linha,
+                    observado_em, casas, odd_mediana, odd_melhor, probabilidade_justa
+                FROM futebol_odds_consensos
+                WHERE provedor='the-odds-api' AND liga=%s
+                ORDER BY provedor, liga, evento_id, mercado, selecao, linha,
+                         observado_em DESC, checkpoint DESC
+            )
+            SELECT e.evento_id, e.inicio, e.mandante, e.visitante,
+                   r.checkpoint, r.mercado, r.selecao, r.linha,
+                   r.observado_em, r.casas, r.odd_mediana, r.odd_melhor,
+                   r.probabilidade_justa, a.odd_mediana AS odd_abertura
+            FROM futebol_odds_eventos e
+            JOIN recentes r ON (r.provedor, r.liga, r.evento_id) =
+                               (e.provedor, e.liga, e.evento_id)
+            LEFT JOIN futebol_odds_consensos a ON
+                (a.provedor, a.liga, a.evento_id, a.mercado, a.selecao, a.linha, a.checkpoint) =
+                (r.provedor, r.liga, r.evento_id, r.mercado, r.selecao, r.linha, 'abertura')
+            WHERE e.provedor='the-odds-api' AND e.liga=%s
+              AND e.inicio > %s AND e.inicio <= %s
+            ORDER BY e.inicio, e.evento_id, r.mercado, r.linha, r.selecao
+        """, (league, league, now, now + timedelta(days=days))).fetchall()
+    numeric = ("linha", "odd_abertura", "odd_mediana", "odd_melhor", "probabilidade_justa")
+    return [{**row, **{key: float(row[key]) if row.get(key) is not None else None for key in numeric}}
+            for row in rows]
+
+
 def _details(event: dict[str, Any], provider: str, league: str,
              captured: datetime) -> list[dict[str, Any]]:
     rows = []
