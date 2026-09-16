@@ -162,8 +162,10 @@ with csv_tab:
             if evaluation['supera_baseline_liga'] is False:
                 st.warning('Nesta amostra o modelo não superou a frequência histórica da liga no Brier.')
             download(evaluation, 'Baixar avaliação histórica', 'avaliacao')
-    except (ValueError, DatabaseError):
-        st.info('Histórico local indisponível para esta seleção. Confira o PostgreSQL e a importação da temporada.')
+    except ValueError:
+        st.info('O histórico europeu não está publicado neste banco. A fonte CSV usada no desenvolvimento não foi incluída na versão pública por restrições de uso e redistribuição.')
+    except DatabaseError:
+        st.error('Não foi possível consultar o PostgreSQL hospedado para carregar este histórico.')
 
 with poisson_tab:
     cid = st.number_input('ID do campeonato na API Dados Futebol', min_value=1, value=3)
@@ -333,6 +335,9 @@ with focus_tab:
                       for name, item in focused['ligas'].items()
                       for market, evaluation in item['avaliacoes'].items()],
                      hide_index=True, width='stretch')
-        st.caption('Premier: CSV 2025/26 quando disponível. Brasileirão: jogos locais de 2026. A avaliação usa as versões atuais dessas fontes.')
+        if 'premier_league' in focused['ligas']:
+            st.caption('Premier: CSV 2025/26. Brasileirão: jogos de 2026. A avaliação usa as versões atuais dessas fontes.')
+        else:
+            st.caption('Avaliação baseada nos jogos disponíveis do Brasileirão 2026. O histórico europeu não está publicado neste banco.')
         st.warning('O modelo não está aprovado para indicações. Compare o Brier do modelo com a referência simples da liga.')
-        download(focused, 'Baixar avaliação das duas ligas', 'avaliacao_foco')
+        download(focused, 'Baixar avaliação', 'avaliacao_foco')
