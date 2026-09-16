@@ -316,8 +316,10 @@ with focus_tab:
                     premier_history, read_brasileirao_goals(db, '2026'))
                 if premier_history is None:
                     st.info('Premier 2025/26 sem histórico CSV neste banco. Avaliação brasileira disponível; a fonte europeia exige direitos de uso para publicação.')
-        except (ValueError, DatabaseError):
-            st.error('Não foi possível ler as duas ligas. Confira o PostgreSQL e as capturas locais.')
+        except DatabaseError:
+            st.error('O aplicativo não conseguiu consultar o PostgreSQL hospedado. Confira o segredo FUTEBOL_DATABASE_URL e reinicie o app.')
+        except ValueError as error:
+            st.warning(f'Conexão estabelecida, mas o histórico brasileiro não pôde ser avaliado: {error}')
     focused = st.session_state.get('avaliacao_foco')
     if focused:
         st.dataframe([{'liga': {'premier_league': 'Premier League', 'brasileirao': 'Brasileirão'}[name],

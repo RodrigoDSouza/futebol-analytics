@@ -1,5 +1,7 @@
 """Ponto de entrada da interface web do Futebol Analytics."""
 
+import os
+
 import streamlit as st
 from pathlib import Path
 
@@ -14,8 +16,10 @@ st.set_page_config(
 )
 
 try:
-    # Segredos na raiz do Streamlit passam ao ambiente usado pelos clientes existentes.
-    st.secrets.to_dict()
+    # Copia explicitamente o segredo do banco para os clientes que leem os.environ.
+    database_url = st.secrets.get("FUTEBOL_DATABASE_URL")
+    if database_url:
+        os.environ["FUTEBOL_DATABASE_URL"] = str(database_url).strip()
 except FileNotFoundError:
     pass  # Desenvolvimento local continua usando .env.
 
