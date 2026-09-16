@@ -355,7 +355,7 @@ with decision_tab:
             overview[2].metric('Última cotação', latest_quote.astimezone(
                 ZoneInfo('America/Sao_Paulo')).strftime('%d/%m %H:%M'))
             overview[3].metric('Mercados do modelo', '3')
-            st.markdown('##### Visão compacta do mercado')
+            st.markdown('##### Probabilidades implícitas nas odds das casas')
             market_summary = [{key: value for key, value in item.items()
                                if key not in ('mandante', 'visitante')}
                               for item in grouped_market.values()]
@@ -373,15 +373,15 @@ with decision_tab:
                 row['cobertura adicional'] = 'completa' if extras == 2 else 'parcial' if extras else 'não coletada'
                 formatted_summary.append(row)
             st.dataframe(formatted_summary, hide_index=True, width='stretch')
-            st.caption('“—” significa que esse mercado adicional não foi coletado para o jogo. Não significa 0%. Resultado e Over 2,5 entram na coleta automática; Over 1,5 e Ambos Marcam dependem da consulta direcionada.')
+            st.caption('Estas porcentagens vêm das odds das casas após remover a margem; não usam a média de gols do nosso modelo. “—” significa que a cotação adicional não foi coletada, não 0%.')
             with st.expander('Dados técnicos das odds'):
                 st.caption(f"{len(market_rows)} registros de mercado consolidados em {len(grouped_market)} jogos. A tabela repetida por seleção foi removida da interface.")
                 download(market_rows, 'Baixar odds detalhadas', f'odds_detalhadas_{odds_league}')
         else:
             st.info('Nenhum evento futuro com consenso armazenado foi encontrado para esta liga.')
-        st.markdown('#### Ranking experimental de oportunidades')
-        st.caption('O modelo diferencia os confrontos e só exibe uma oportunidade quando supera a referência da liga no backtest, há ao menos três casas e a vantagem e o valor esperado chegam a 3%.')
-        if st.button('Analisar oportunidades nos jogos carregados'):
+        st.markdown('#### Probabilidades calculadas pelo histórico')
+        st.caption('Nosso modelo usa até 20 jogos anteriores por contexto, separa mandante em casa e visitante fora, pondera jogos recentes e regulariza pela média da liga.')
+        if st.button('Calcular probabilidades pelos últimos jogos', type='primary'):
             try:
                 with st.spinner('Calculando previsões e validação cronológica...'):
                     db = store()
@@ -410,7 +410,7 @@ with decision_tab:
         if ranking:
             if ranking.get('resumo_jogos'):
                 approved_markets = sum(item['aprovado'] for item in ranking['validacoes'].values())
-                st.markdown('##### Probabilidades por jogo')
+                st.markdown('##### Nosso modelo · uma linha por jogo')
                 if approved_markets:
                     st.success(f'{approved_markets} mercado(s) superaram a referência histórica nesta validação.')
                 else:
@@ -424,6 +424,7 @@ with decision_tab:
                     'mais de 1,5 gols': 100 * item['over_1.5'],
                     'mais de 2,5 gols': 100 * item['over_2.5'],
                     'ambos marcam': 100 * item['ambas_marcam'],
+                    'média gols · casa/fora': f"{item['media_gols_recente_casa']:.2f} / {item['media_gols_recente_fora']:.2f}",
                     'gols esperados': f"{item['gols_esperados_mandante']:.2f} × {item['gols_esperados_visitante']:.2f}",
                     'confiança': item['confianca'],
                     'amostra casa/fora': f"{item['amostra_mandante']}/{item['amostra_visitante']}",

@@ -85,6 +85,11 @@ def predict_match(rows: list[dict[str, Any]], home: str, away: str,
         effective = sum(weight(row) for row in sample)
         return (sum(weight(row) * row[field] for row in sample) + PRIOR_MATCHES * prior) / (effective + PRIOR_MATCHES)
 
+    def recent_total(sample: list[dict[str, Any]]) -> float:
+        effective = sum(weight(row) for row in sample)
+        return sum(weight(row) * (row["gols_mandante"] + row["gols_visitante"])
+                   for row in sample) / effective
+
     home_scored = shrunk(home_rows, "gols_mandante", league_home)
     home_allowed = shrunk(home_rows, "gols_visitante", league_away)
     away_scored = shrunk(away_rows, "gols_visitante", league_away)
@@ -100,6 +105,8 @@ def predict_match(rows: list[dict[str, Any]], home: str, away: str,
                     "meia_vida_dias": HALF_LIFE_DAYS,
                     "ultima_partida": max(str(row["data"]) for row in valid)},
         "gols_esperados": {"mandante": lambda_home, "visitante": lambda_away},
+        "media_gols_recente": {"mandante_em_casa": recent_total(home_rows),
+                               "visitante_fora": recent_total(away_rows)},
         **result,
     }
 
@@ -217,7 +224,9 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
             "over_2.5": probabilities["over_2.5"],
             "ambas_marcam": probabilities["ambas_marcam"],
             "gols_esperados_mandante": prediction["gols_esperados"]["mandante"],
-            "gols_esperados_visitante": prediction["gols_esperados"]["visitante"]})
+            "gols_esperados_visitante": prediction["gols_esperados"]["visitante"],
+            "media_gols_recente_casa": prediction["media_gols_recente"]["mandante_em_casa"],
+            "media_gols_recente_fora": prediction["media_gols_recente"]["visitante_fora"]})
         summaries[-1].update(amostra_mandante=sample["mandante_casa"],
             amostra_visitante=sample["visitante_fora"], ultima_partida=sample["ultima_partida"],
             incerteza_aproximada=uncertainty,

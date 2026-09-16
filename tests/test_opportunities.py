@@ -26,6 +26,7 @@ def test_prediction_resolves_provider_suffix_and_returns_markets():
     assert result["amostra"]["liga"] == 80
     assert 0 < result["probabilidades"]["over_1.5"] < 1
     assert result["gols_esperados"]["mandante"] > 0
+    assert result["media_gols_recente"]["mandante_em_casa"] > 0
     assert resolve_team("Wolves", {"Wolverhampton Wanderers FC", "Fulham"}) == "Wolverhampton Wanderers FC"
     assert result["amostra"]["meia_vida_dias"] == 180
 
