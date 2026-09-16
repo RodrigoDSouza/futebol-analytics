@@ -1,5 +1,7 @@
 from datetime import date, datetime, timezone
 
+import pytest
+
 from futebol_analytics.analysis.opportunities import predict_match, rank_opportunities, resolve_team
 
 
@@ -34,4 +36,7 @@ def test_ranking_abstains_when_validation_does_not_pass():
     assert report["candidatos_avaliados"] == 1
     assert report["oportunidades"] == [] or report["oportunidades"][0]["elegivel"]
     assert report["pre_selecao_eventos"] == ["e1"]
+    summary = report["resumo_jogos"][0]
+    assert summary["vitoria_mandante"] + summary["empate"] + summary["vitoria_visitante"] == pytest.approx(1)
+    assert 0 <= summary["over_1.5"] <= 1
     assert set(report["validacoes"]) == {"over_1.5", "over_2.5", "ambas_marcam"}

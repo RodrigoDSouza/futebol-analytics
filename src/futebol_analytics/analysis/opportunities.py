@@ -131,10 +131,13 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
     }
     validations = {key: validate(rows, key) for key in {value[0] for value in mappings.values()}}
     predictions: dict[str, dict[str, Any]] = {}
+    event_meta: dict[str, dict[str, Any]] = {}
     rejected: dict[str, str] = {}
     candidates = []
     for quote in odds:
         event_id = str(quote["evento_id"])
+        event_meta.setdefault(event_id, {key: quote[key] for key in
+                              ("inicio", "mandante", "visitante")})
         if event_id not in predictions and event_id not in rejected:
             try:
                 predictions[event_id] = predict_match(
@@ -174,9 +177,22 @@ def rank_opportunities(rows: list[dict[str, Any]], odds: list[dict[str, Any]],
                                                   abs(row["vantagem"]))
     shortlist = [event_id for event_id, _ in sorted(event_scores.items(),
                  key=lambda item: (-item[1], item[0]))[:3]]
+    summaries = []
+    for event_id, prediction in predictions.items():
+        meta, probabilities = event_meta[event_id], prediction["probabilidades"]
+        summaries.append({"evento_id": event_id, **meta,
+            "vitoria_mandante": probabilities["mandante"],
+            "empate": probabilities["empate"],
+            "vitoria_visitante": probabilities["visitante"],
+            "over_1.5": probabilities["over_1.5"],
+            "over_2.5": probabilities["over_2.5"],
+            "ambas_marcam": probabilities["ambas_marcam"],
+            "gols_esperados_mandante": prediction["gols_esperados"]["mandante"],
+            "gols_esperados_visitante": prediction["gols_esperados"]["visitante"]})
+    summaries.sort(key=lambda item: (item["inicio"], item["mandante"], item["visitante"]))
     return {"modelo": "poisson_mando_regularizado_v1", "oportunidades": ranked,
             "candidatos_avaliados": len(candidates), "eventos_sem_modelo": rejected,
-            "pre_selecao_eventos": shortlist,
+            "pre_selecao_eventos": shortlist, "resumo_jogos": summaries,
             "validacoes": validations,
             "criterios": {"minimo_casas": 3, "vantagem_minima": MIN_EDGE,
                           "valor_esperado_minimo": MIN_EV, "mercado_deve_superar_liga": True},

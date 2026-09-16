@@ -394,16 +394,17 @@ with focus_tab:
                 'casas': row['casas'],
             })
         if display_rows:
-            st.dataframe(display_rows, hide_index=True, width='stretch',
-                column_config={
-                    'odd de abertura': st.column_config.NumberColumn(format='%.2f'),
-                    'odd atual · mediana': st.column_config.NumberColumn(format='%.2f'),
-                    'melhor odd observada': st.column_config.NumberColumn(format='%.2f'),
-                    'probabilidade justa · mercado': st.column_config.NumberColumn(format='%.1f%%'),
-                    'benchmark histórico · liga': st.column_config.NumberColumn(format='%.1f%%'),
-                    'diferença · p.p.': st.column_config.NumberColumn(format='%+.1f'),
-                })
-            st.caption('A probabilidade de mercado remove a margem do conjunto de cotações. O benchmark da liga é uma frequência histórica igual para todos os confrontos e ainda não comprova vantagem.')
+            with st.expander('Ver detalhes das odds armazenadas'):
+                st.dataframe(display_rows, hide_index=True, width='stretch',
+                    column_config={
+                        'odd de abertura': st.column_config.NumberColumn(format='%.2f'),
+                        'odd atual · mediana': st.column_config.NumberColumn(format='%.2f'),
+                        'melhor odd observada': st.column_config.NumberColumn(format='%.2f'),
+                        'probabilidade justa · mercado': st.column_config.NumberColumn(format='%.1f%%'),
+                        'benchmark histórico · liga': st.column_config.NumberColumn(format='%.1f%%'),
+                        'diferença · p.p.': st.column_config.NumberColumn(format='%+.1f'),
+                    })
+                st.caption('A probabilidade de mercado remove a margem do conjunto de cotações. O benchmark da liga é uma frequência histórica igual para todos os confrontos e ainda não comprova vantagem.')
         else:
             st.info('Nenhum evento futuro com consenso armazenado foi encontrado para esta liga.')
         st.markdown('#### Ranking experimental de oportunidades')
@@ -431,6 +432,24 @@ with focus_tab:
         ranking = (st.session_state.get('ranking_oportunidades')
                    if st.session_state.get('ranking_oportunidades_liga') == odds_league else None)
         if ranking:
+            if ranking.get('resumo_jogos'):
+                st.markdown('##### Probabilidades por jogo')
+                st.dataframe([{
+                    'início': item['inicio'].astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m %H:%M'),
+                    'jogo': f"{item['mandante']} × {item['visitante']}",
+                    'vitória · mandante': 100 * item['vitoria_mandante'],
+                    'empate': 100 * item['empate'],
+                    'vitória · visitante': 100 * item['vitoria_visitante'],
+                    'mais de 1,5 gols': 100 * item['over_1.5'],
+                    'mais de 2,5 gols': 100 * item['over_2.5'],
+                    'ambos marcam': 100 * item['ambas_marcam'],
+                    'gols esperados': f"{item['gols_esperados_mandante']:.2f} × {item['gols_esperados_visitante']:.2f}",
+                } for item in ranking['resumo_jogos']], hide_index=True, width='stretch',
+                    column_config={name: st.column_config.NumberColumn(format='%.1f%%')
+                                   for name in ('vitória · mandante', 'empate',
+                                                'vitória · visitante', 'mais de 1,5 gols',
+                                                'mais de 2,5 gols', 'ambos marcam')})
+                st.caption('Probabilidades do modelo por confronto. As colunas de vitória somam 100% com o empate; os mercados de gols são avaliações separadas.')
             validation_rows = [{
                 'mercado': {'over_1.5': 'Mais de 1,5 gols', 'over_2.5': 'Mais de 2,5 gols',
                             'ambas_marcam': 'Ambos marcam'}[key],
